@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS files (
     sha256 TEXT NOT NULL,
     commit_sha TEXT NOT NULL,
     chunk_count INTEGER NOT NULL,
+    vector_synced INTEGER NOT NULL DEFAULT 1,
     indexed_at TEXT NOT NULL,
     PRIMARY KEY(repository_id, path)
 );
@@ -118,6 +119,14 @@ class Database:
         self._connection.row_factory = sqlite3.Row
         with self._lock:
             self._connection.executescript(SCHEMA)
+            columns = {
+                row[1] for row in self._connection.execute("PRAGMA table_info(files)").fetchall()
+            }
+            if "vector_synced" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE files ADD COLUMN vector_synced INTEGER NOT NULL DEFAULT 1"
+                )
+                self._connection.commit()
 
     def close(self) -> None:
         with self._lock:
@@ -195,6 +204,7 @@ class Database:
         sha256: str,
         commit_sha: str,
         chunks: list[dict[str, Any]],
+        vector_synced: bool = True,
     ) -> None:
         now = utc_now()
         with self._lock, self._connection:
@@ -213,11 +223,12 @@ class Database:
                     chunk,
                 )
             self._connection.execute(
-                """INSERT INTO files(repository_id,path,sha256,commit_sha,chunk_count,indexed_at)
-                VALUES(?,?,?,?,?,?) ON CONFLICT(repository_id,path) DO UPDATE SET
+                """INSERT INTO files(repository_id,path,sha256,commit_sha,chunk_count,vector_synced,indexed_at)
+                VALUES(?,?,?,?,?,?,?) ON CONFLICT(repository_id,path) DO UPDATE SET
                 sha256=excluded.sha256,commit_sha=excluded.commit_sha,
-                chunk_count=excluded.chunk_count,indexed_at=excluded.indexed_at""",
-                (repository_id, path, sha256, commit_sha, len(chunks), now),
+                chunk_count=excluded.chunk_count,vector_synced=excluded.vector_synced,
+                indexed_at=excluded.indexed_at""",
+                (repository_id, path, sha256, commit_sha, len(chunks), int(vector_synced), now),
             )
 
     def delete_file(self, repository_id: str, path: str) -> None:
@@ -227,6 +238,18 @@ class Database:
             )
             self._connection.execute(
                 "DELETE FROM files WHERE repository_id=? AND path=?", (repository_id, path)
+            )
+
+    def update_file_commit(self, repository_id: str, path: str, commit_sha: str) -> None:
+        """Advance unchanged file/chunk provenance without re-embedding content."""
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE files SET commit_sha=? WHERE repository_id=? AND path=?",
+                (commit_sha, repository_id, path),
+            )
+            self._connection.execute(
+                "UPDATE chunks SET commit_sha=? WHERE repository_id=? AND file_path=?",
+                (commit_sha, repository_id, path),
             )
 
     def chunk(self, chunk_id: str) -> dict[str, Any] | None:

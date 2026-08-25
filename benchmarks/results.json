@@ -7937,5 +7937,80 @@
         }
       ]
     }
+  },
+  "performance_benchmark": {
+    "kind": "local_performance_benchmark",
+    "generated_at": "2026-08-25T01:56:03.272567+00:00",
+    "scope": "Measurements describe only this Windows machine and this repository snapshot.",
+    "system": {
+      "os": "Windows-11-10.0.26200-SP0",
+      "cpu": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+      "logical_cpu_count": 24,
+      "ram_bytes": 33684971520,
+      "process_rss_bytes": 122957824,
+      "cpu_percent_before": 16.3,
+      "cpu_percent_after": 75.9
+    },
+    "dataset": {
+      "source_repository": ".",
+      "commit_sha": "950d83df042dc06d2c65e6129eb061e45f291f9b",
+      "full_index_files": 69,
+      "full_index_chunks": 442
+    },
+    "providers": {
+      "embedding_model": "nomic-embed-text",
+      "embedding_version": "latest",
+      "vector_store": "qdrant",
+      "qdrant_version": "1.15.4"
+    },
+    "full_index": {
+      "seconds": 28.853984200002742,
+      "files_per_second": 2.391350862387782,
+      "chunks_per_second": 15.318508422831881,
+      "embedding_batches_per_second": 2.391350862387782,
+      "embedding_batch_definition": "one file per embedding call",
+      "errors": 0
+    },
+    "incremental_add_modify_delete": {
+      "seconds": 0.9505158999963896,
+      "indexed_files": 2,
+      "deleted_files": 1,
+      "skipped_files": 67,
+      "errors": 0
+    },
+    "incremental_one_file": {
+      "seconds": 0.3735104000006686,
+      "indexed_files": 1,
+      "deleted_files": 0,
+      "skipped_files": 68,
+      "speedup_vs_full_wall_time": 77.25081871870528,
+      "errors": 0
+    },
+    "query_concurrency": [
+      {
+        "concurrency": 1,
+        "query_count": 10,
+        "wall_seconds": 7.970795600005658,
+        "queries_per_second": 1.254579906677434,
+        "p50_latency_ms": 249.4047000000137,
+        "p95_latency_ms": 2319.9219000016456
+      },
+      {
+        "concurrency": 5,
+        "query_count": 50,
+        "wall_seconds": 5.3335439000002225,
+        "queries_per_second": 9.374629877893742,
+        "p50_latency_ms": 513.0678999994416,
+        "p95_latency_ms": 642.793700004404
+      },
+      {
+        "concurrency": 10,
+        "query_count": 100,
+        "wall_seconds": 9.389641599998868,
+        "queries_per_second": 10.650033756348279,
+        "p50_latency_ms": 935.609400003159,
+        "p95_latency_ms": 1122.080900000583
+      }
+    ]
   }
 }

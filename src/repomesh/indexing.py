@@ -84,10 +84,13 @@ class RepositoryIndexer:
                 raise IndexCancelled("index job cancelled")
             try:
                 digest = file_sha256(path)
+                previous = manifest.get(relative_path, {})
                 if (
                     mode == "incremental"
-                    and manifest.get(relative_path, {}).get("sha256") == digest
+                    and previous.get("sha256") == digest
+                    and bool(previous.get("vector_synced", 1))
                 ):
+                    self.database.update_file_commit(repository_id, relative_path, commit_sha)
                     stats.skipped_files += 1
                     progress(stats, relative_path, None)
                     continue
@@ -110,16 +113,23 @@ class RepositoryIndexer:
                     item = chunk.to_dict()
                     item["vector_json"] = json.dumps(vector)
                     chunk_dicts.append(item)
-                self.database.replace_file_chunks(
-                    repository_id, relative_path, digest, commit_sha, chunk_dicts
-                )
+                vector_synced = True
                 try:
                     self.vector_store.delete_file(repository_id, relative_path)
                     self.vector_store.upsert(chunk_dicts, vectors)
                 except ProviderUnavailable as exc:
+                    vector_synced = False
                     logger.warning(
                         "vector sync deferred", extra={"path": relative_path, "error": str(exc)}
                     )
+                self.database.replace_file_chunks(
+                    repository_id,
+                    relative_path,
+                    digest,
+                    commit_sha,
+                    chunk_dicts,
+                    vector_synced=vector_synced,
+                )
                 stats.indexed_files += 1
                 stats.indexed_chunks += len(chunks)
                 progress(stats, relative_path, None)

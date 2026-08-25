@@ -17,6 +17,7 @@ import psutil
 
 from repomesh.config import Settings
 from repomesh.models import SearchMode
+from repomesh.providers import QdrantVectorStore
 from repomesh.repositories import current_commit, register_repository
 from repomesh.services import Services
 
@@ -85,6 +86,7 @@ def main() -> None:
             generation_provider="fake",
             vector_provider=args.vector_provider,
             embedding_dimensions=args.embedding_dimensions,
+            qdrant_collection=f"repomesh_benchmark_{os.getpid()}",
         )
         services = Services.create(settings)
         try:
@@ -188,6 +190,13 @@ def main() -> None:
             args.output.write_text(json.dumps(combined, indent=2), encoding="utf-8")
             print(json.dumps(payload, indent=2))
         finally:
+            if isinstance(services.vector_store, QdrantVectorStore):
+                try:
+                    services.vector_store.client.delete_collection(
+                        services.vector_store.collection
+                    )
+                except Exception:
+                    pass
             services.close()
 
 

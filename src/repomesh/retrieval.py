@@ -31,7 +31,7 @@ class Retriever:
             if mode != SearchMode.dense
             else []
         )
-        lexical = [(row["id"], 1.0 / (1.0 + abs(float(row["bm25_score"])))) for row in lexical_rows]
+        lexical = [(row["id"], max(0.0, -float(row["bm25_score"]))) for row in lexical_rows]
         vector: list[tuple[str, float]] = []
         if mode != SearchMode.lexical:
             query_vector = self.embedder.embed([query])[0]

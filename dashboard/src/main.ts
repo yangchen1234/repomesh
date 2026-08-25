@@ -75,6 +75,8 @@ async function indexRepository(id: string): Promise<void> {
   clearError()
   try {
     const job = await api<{ id: string }>('/v1/repositories/' + encodeURIComponent(id) + '/index', { method: 'POST', body: JSON.stringify({ mode: 'incremental' }) })
+    const indicator = document.querySelector(`[data-job="${id}"]`)
+    if (indicator) { indicator.setAttribute('data-job', job.id); indicator.textContent = 'queued 0/0' }
     await pollJob(job.id); await refreshRepositories()
   } catch (error) { showError(error) }
 }

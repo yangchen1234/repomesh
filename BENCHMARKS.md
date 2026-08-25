@@ -16,18 +16,19 @@ The committed ParcelFlow corpus supplies 25 queries covering single-file, cross-
 
 ## Local performance run
 
-The initial performance harness verification used the deterministic embedding provider and persistent SQLite vector implementation on commit `5154f86f3b63ca52a307828c2feb60ef96dab135`. It indexed 60 files into 316 chunks on Windows 11 build 26200, Intel Core Ultra 9 275HX (24 logical processors), and 31.37 GiB RAM.
+The current run used `nomic-embed-text` through Ollama and Qdrant 1.15.4 on commit `950d83df042dc06d2c65e6129eb061e45f291f9b`. It indexed 69 files into 442 chunks on Windows 11 build 26200, Intel Core Ultra 9 275HX (24 logical processors), and 31.37 GiB RAM.
 
 | Operation | Observed result |
 |---|---:|
-| Full index | 0.255 s; 235.11 files/s; 1238.23 chunks/s |
-| Incremental add + modify + delete | 0.130 s; 2 indexed, 1 deleted, 58 skipped, 0 errors |
-| Incremental one-file change | 0.132 s; 1 indexed, 59 skipped, 1.93× full-wall-time ratio |
-| Hybrid query, concurrency 1 | 60.43 queries/s; p50 16.17 ms; p95 18.14 ms |
-| Hybrid query, concurrency 5 | 63.38 queries/s; p50 77.00 ms; p95 104.10 ms |
-| Hybrid query, concurrency 10 | 58.49 queries/s; p50 174.42 ms; p95 230.91 ms |
+| Full index | 28.854 s; 2.39 files/s; 15.32 chunks/s |
+| Embedding batches | 2.39 batches/s; one file per embedding call |
+| Incremental add + modify + delete | 0.951 s; 2 indexed, 1 deleted, 67 skipped, 0 errors |
+| Incremental one-file change | 0.374 s; 1 indexed, 68 skipped, 77.25× full-wall-time ratio |
+| Hybrid query, concurrency 1 | 1.25 queries/s; p50 249.40 ms; p95 2319.92 ms |
+| Hybrid query, concurrency 5 | 9.37 queries/s; p50 513.07 ms; p95 642.79 ms |
+| Hybrid query, concurrency 10 | 10.65 queries/s; p50 935.61 ms; p95 1122.08 ms |
 
-The real Ollama/Qdrant performance run should be treated separately from the deterministic baseline because it includes GPU/model and HTTP vector-store costs. The raw result identifies the provider, so reports must not merge the two as equivalent.
+The concurrency-1 p95 contains first-query Ollama warm-up cost and is retained. CPU samples were 16.3% before and 75.9% after the workload; process RSS at the end was 122,957,824 bytes. GPU utilization was not sampled by this harness.
 
 ## Reproduce
 

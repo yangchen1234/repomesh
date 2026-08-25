@@ -105,7 +105,8 @@ class JobManager:
                     )
 
             try:
-                stats = self.indexer.index(job.repository_id, job.mode, progress, is_cancelled)
+                run_mode = job.mode if attempt == 1 else "incremental"
+                stats = self.indexer.index(job.repository_id, run_mode, progress, is_cancelled)
                 status = "completed_with_errors" if stats.error_count else "completed"
                 self.database.update_job(job_id, status=status, lease_expires_at=None)
                 return

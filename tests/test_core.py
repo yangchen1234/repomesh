@@ -143,6 +143,24 @@ def test_repeated_index_has_no_duplicate_chunks(tmp_path: Path, git_repository: 
         services.close()
 
 
+def test_unsynced_vector_file_is_retried_incrementally(
+    tmp_path: Path, git_repository: Path
+) -> None:
+    services, repository_id = indexed_services(tmp_path, git_repository)
+    try:
+        services.database.execute(
+            "UPDATE files SET vector_synced=0 WHERE repository_id=? AND path='util.py'",
+            (repository_id,),
+        )
+        job = services.jobs.submit(repository_id, "incremental", "vector-resync")
+        completed = services.jobs.wait(job.id)
+        assert completed.indexed_files == 1
+        assert completed.skipped_files == 3
+        assert services.database.file_manifest(repository_id)["util.py"]["vector_synced"] == 1
+    finally:
+        services.close()
+
+
 def test_lexical_search_returns_exact_source_lines(tmp_path: Path, git_repository: Path) -> None:
     services, repository_id = indexed_services(tmp_path, git_repository)
     try:
@@ -249,7 +267,11 @@ def test_job_cancellation(tmp_path: Path, git_repository: Path) -> None:
 
 
 class ImmediateIndexer:
+    def __init__(self) -> None:
+        self.modes: list[str] = []
+
     def index(self, repository_id: str, mode: str, progress: Any, cancelled: Any) -> IndexStats:
+        self.modes.append(mode)
         stats = IndexStats(total_files=1, skipped_files=1)
         progress(stats, "already.py", None)
         return stats
@@ -264,18 +286,23 @@ def test_restart_recovery_resumes_running_job(tmp_path: Path, git_repository: Pa
         id="recover-me",
         repository_id=repository.id,
         kind="index",
-        mode="incremental",
+        mode="full",
         status="running",
         progress_done=0,
         progress_total=1,
+        attempt=1,
         created_at=now,
         updated_at=now,
     )
     database.add_job(job)
-    manager = JobManager(database, cast(Any, ImmediateIndexer()), 30, 1)
+    indexer = ImmediateIndexer()
+    manager = JobManager(database, cast(Any, indexer), 30, 2)
     try:
         assert manager.recover() == 1
-        assert manager.wait(job.id).status == "completed"
+        recovered = manager.wait(job.id)
+        assert recovered.status == "completed"
+        assert recovered.mode == "full"
+        assert indexer.modes == ["incremental"]
     finally:
         manager.shutdown()
         database.close()

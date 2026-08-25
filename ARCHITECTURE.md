@@ -30,7 +30,7 @@ The API is intentionally separated from the Dashboard. A client sees only the st
 
 Registration resolves the supplied path, checks it against every configured allowlist root, verifies that it is the Git top-level directory, and stores a deterministic repository UUID. Discovery uses `git ls-files --cached --others --exclude-standard`, then applies defense-in-depth filters for dependency/build directories, secret filenames, binary extensions/content, generated suffixes, and file size.
 
-File state is `(repository_id, relative_path, sha256, commit_sha)`. Chunk identity is UUIDv5 over repository ID, normalized path, exact line range, and content SHA-256. Replacing a changed file is one SQLite transaction: delete its old chunks, insert the new chunks, then upsert its manifest row. Full reindex therefore replaces per-file data without duplicates; incremental indexing skips matching hashes and explicitly removes deleted paths. Qdrant updates use the same UUID and repository/path payload.
+File state is `(repository_id, relative_path, sha256, commit_sha, vector_synced)`. Chunk identity is UUIDv5 over repository ID, normalized path, exact line range, and content SHA-256. Qdrant is updated idempotently before the SQLite manifest transaction is committed; an unavailable store leaves `vector_synced=false`, forcing a later incremental retry instead of silently skipping the file. Replacing a changed file deletes its old SQLite chunks, inserts new chunks, and upserts its manifest in one transaction. Full reindex therefore replaces per-file data without duplicates; incremental indexing skips matching, vector-synced hashes and explicitly removes deleted paths.
 
 ## Chunking
 
