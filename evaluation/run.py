@@ -3,13 +3,18 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
+import shutil
 import statistics
+import subprocess
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from repomesh.config import Settings
 from repomesh.models import SearchMode
+from repomesh.providers import QdrantVectorStore
 from repomesh.repositories import current_commit, register_repository
 from repomesh.services import Services
 
@@ -43,21 +48,52 @@ def evaluate_case(paths: list[str], gold: set[str]) -> dict[str, float]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository", type=Path, default=Path.cwd())
-    parser.add_argument("--data-dir", type=Path, default=Path("data/evaluation"))
+    parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--output", type=Path, default=Path("benchmarks/results.json"))
     parser.add_argument("--embedding-provider", choices=["fake", "ollama"], default="fake")
     parser.add_argument("--vector-provider", choices=["memory", "qdrant"], default="memory")
     parser.add_argument("--embedding-dimensions", type=int, default=384)
     args = parser.parse_args()
-    repository_root = args.repository.resolve()
+    source_root = args.repository.resolve()
+    temporary = tempfile.TemporaryDirectory(prefix="repomesh-evaluation-")
+    temporary_root = Path(temporary.name)
+    repository_root = temporary_root / "corpus"
+    repository_root.mkdir()
+    shutil.copytree(source_root / "sample_repository", repository_root / "sample_repository")
+    subprocess.run(
+        ["git", "init", "-b", "main"], cwd=repository_root, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "evaluation@repomesh.local"],
+        cwd=repository_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "RepoMesh Evaluation"],
+        cwd=repository_root,
+        check=True,
+    )
+    subprocess.run(["git", "add", "."], cwd=repository_root, check=True)
+    commit_environment = os.environ.copy()
+    commit_environment.update(
+        {"GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z"}
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "deterministic evaluation corpus"],
+        cwd=repository_root,
+        check=True,
+        capture_output=True,
+        env=commit_environment,
+    )
     cases = json.loads((Path(__file__).with_name("cases.json")).read_text(encoding="utf-8"))
     settings = Settings(
-        data_dir=args.data_dir,
+        data_dir=args.data_dir or temporary_root / "data",
         repository_roots=[repository_root.parent],
         embedding_provider=args.embedding_provider,
         generation_provider="fake",
         vector_provider=args.vector_provider,
         embedding_dimensions=args.embedding_dimensions,
+        qdrant_collection=f"repomesh_evaluation_{os.getpid()}",
     )
     services = Services.create(settings)
     try:
@@ -109,7 +145,8 @@ def main() -> None:
         payload = {
             "kind": "retrieval_evaluation",
             "generated_at": datetime.now(UTC).isoformat(),
-            "repository": str(repository_root),
+            "repository": "temporary Git corpus built from sample_repository/",
+            "source_fixture": str(source_root / "sample_repository"),
             "commit_sha": current_commit(repository_root),
             "dataset": {
                 "case_count": len(cases),
@@ -138,7 +175,13 @@ def main() -> None:
         args.output.write_text(json.dumps(combined, indent=2), encoding="utf-8")
         print(json.dumps({"output": str(args.output.resolve()), "metrics": modes}, indent=2))
     finally:
+        if isinstance(services.vector_store, QdrantVectorStore):
+            try:
+                services.vector_store.client.delete_collection(services.vector_store.collection)
+            except Exception:
+                pass
         services.close()
+        temporary.cleanup()
 
 
 if __name__ == "__main__":

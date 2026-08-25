@@ -192,9 +192,7 @@ def main() -> None:
         finally:
             if isinstance(services.vector_store, QdrantVectorStore):
                 try:
-                    services.vector_store.client.delete_collection(
-                        services.vector_store.collection
-                    )
+                    services.vector_store.client.delete_collection(services.vector_store.collection)
                 except Exception:
                     pass
             services.close()

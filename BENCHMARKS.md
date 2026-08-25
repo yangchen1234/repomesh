@@ -6,13 +6,13 @@ All numbers below are observed measurements from this Windows computer, not gene
 
 ## Retrieval evaluation
 
-The committed ParcelFlow corpus supplies 25 queries covering single-file, cross-file, symbol, architecture, and implementation-location questions. Gold files and symbols are in `evaluation/cases.json`. The current real-provider run used `nomic-embed-text` through Ollama and Qdrant 1.15.4.
+The committed ParcelFlow corpus supplies 25 queries covering single-file, cross-file, symbol, architecture, and implementation-location questions. Gold files and symbols are in `evaluation/cases.json`. The harness constructs a clean temporary Git corpus on every run; this session indexed 15 files into 47 chunks at deterministic fixture commit `5277170f9013c543bf6ca32ad5abe31d5aff814a`. The current real-provider run used `nomic-embed-text` through Ollama and Qdrant 1.15.4.
 
 | Mode | Recall@3 | Recall@5 | MRR@10 | nDCG@10 | Hit rate | Mean latency | p50 | p95 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| lexical | 0.380 | 0.680 | 0.223 | 0.333 | 0.720 | 1.45 ms | 1.33 ms | 2.15 ms |
-| dense | 1.000 | 1.000 | 0.920 | 0.941 | 1.000 | 251.04 ms | 248.01 ms | 285.45 ms |
-| hybrid | 0.780 | 0.920 | 0.696 | 0.754 | 0.960 | 253.01 ms | 249.57 ms | 294.96 ms |
+| lexical | 0.880 | 0.960 | 0.776 | 0.827 | 0.960 | 0.84 ms | 0.43 ms | 2.66 ms |
+| dense | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 245.41 ms | 245.71 ms | 284.51 ms |
+| hybrid | 1.000 | 1.000 | 0.933 | 0.950 | 1.000 | 256.27 ms | 255.65 ms | 295.60 ms |
 
 ## Local performance run
 
@@ -42,7 +42,7 @@ Deterministic baseline:
 Real local providers:
 
 ```powershell
-.\scripts\evaluate.ps1 --data-dir data/evaluation-real --embedding-provider ollama --vector-provider qdrant --embedding-dimensions 768
+.\scripts\evaluate.ps1 --embedding-provider ollama --vector-provider qdrant --embedding-dimensions 768
 .\scripts\benchmark.ps1 --embedding-provider ollama --vector-provider qdrant --embedding-dimensions 768
 ```
 
