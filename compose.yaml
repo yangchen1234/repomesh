@@ -1,0 +1,68 @@
+name: repomesh
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${REPOMESH_PORT:-8787}:8787"
+    environment:
+      REPOMESH_HOST: 0.0.0.0
+      REPOMESH_PORT: 8787
+      REPOMESH_DATA_DIR: /data
+      REPOMESH_REPOSITORY_ROOTS: '["/repositories"]'
+      REPOMESH_EMBEDDING_PROVIDER: ${REPOMESH_EMBEDDING_PROVIDER:-fake}
+      REPOMESH_EMBEDDING_MODEL: ${REPOMESH_EMBEDDING_MODEL:-nomic-embed-text}
+      REPOMESH_EMBEDDING_DIMENSIONS: ${REPOMESH_EMBEDDING_DIMENSIONS:-384}
+      REPOMESH_GENERATION_PROVIDER: ${REPOMESH_GENERATION_PROVIDER:-fake}
+      REPOMESH_GENERATION_MODEL: ${REPOMESH_GENERATION_MODEL:-qwen2.5-coder:1.5b}
+      REPOMESH_VECTOR_PROVIDER: ${REPOMESH_VECTOR_PROVIDER:-qdrant}
+      REPOMESH_QDRANT_URL: http://qdrant:6333
+      REPOMESH_OLLAMA_URL: http://host.docker.internal:11434
+      REPOMESH_API_TOKEN: ${REPOMESH_API_TOKEN:-}
+    volumes:
+      - repomesh_data:/data
+      - ./:/repositories/repomesh:ro
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/v1/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  ollama:
+    image: ollama/ollama:0.32.15
+    profiles: ["models"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  qdrant_data:
+  repomesh_data:
+  ollama_data:
+
