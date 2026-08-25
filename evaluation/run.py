@@ -43,17 +43,21 @@ def evaluate_case(paths: list[str], gold: set[str]) -> dict[str, float]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository", type=Path, default=Path.cwd())
-    parser.add_argument("--data-dir", type=Path, default=Path("work/evaluation-data"))
+    parser.add_argument("--data-dir", type=Path, default=Path("data/evaluation"))
     parser.add_argument("--output", type=Path, default=Path("benchmarks/results.json"))
+    parser.add_argument("--embedding-provider", choices=["fake", "ollama"], default="fake")
+    parser.add_argument("--vector-provider", choices=["memory", "qdrant"], default="memory")
+    parser.add_argument("--embedding-dimensions", type=int, default=384)
     args = parser.parse_args()
     repository_root = args.repository.resolve()
     cases = json.loads((Path(__file__).with_name("cases.json")).read_text(encoding="utf-8"))
     settings = Settings(
         data_dir=args.data_dir,
         repository_roots=[repository_root.parent],
-        embedding_provider="fake",
+        embedding_provider=args.embedding_provider,
         generation_provider="fake",
-        vector_provider="memory",
+        vector_provider=args.vector_provider,
+        embedding_dimensions=args.embedding_dimensions,
     )
     services = Services.create(settings)
     try:
@@ -69,7 +73,7 @@ def main() -> None:
             latencies = []
             for case in cases:
                 response = services.retriever.search(repository.id, case["query"], mode, 10, 30, 30)
-                paths = [result.file_path for result in response.results]
+                paths = list(dict.fromkeys(result.file_path for result in response.results))
                 metrics = evaluate_case(paths, set(case["gold_files"]))
                 latencies.append(response.latency_ms)
                 per_case.append(
@@ -120,7 +124,18 @@ def main() -> None:
             "cases": raw_cases,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        combined: dict[str, Any] = {}
+        if args.output.exists():
+            try:
+                existing = json.loads(args.output.read_text(encoding="utf-8"))
+                if isinstance(existing, dict):
+                    combined = existing
+            except (json.JSONDecodeError, OSError):
+                pass
+        if "kind" in combined:
+            combined = {}
+        combined["retrieval_evaluation"] = payload
+        args.output.write_text(json.dumps(combined, indent=2), encoding="utf-8")
         print(json.dumps({"output": str(args.output.resolve()), "metrics": modes}, indent=2))
     finally:
         services.close()

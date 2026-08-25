@@ -67,7 +67,10 @@ def timed_queries(services: Services, repository_id: str, concurrency: int) -> d
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository", type=Path, default=Path.cwd())
-    parser.add_argument("--output", type=Path, default=Path("benchmarks/performance.json"))
+    parser.add_argument("--output", type=Path, default=Path("benchmarks/results.json"))
+    parser.add_argument("--embedding-provider", choices=["fake", "ollama"], default="fake")
+    parser.add_argument("--vector-provider", choices=["memory", "qdrant"], default="memory")
+    parser.add_argument("--embedding-dimensions", type=int, default=384)
     args = parser.parse_args()
     source = args.repository.resolve()
     process = psutil.Process(os.getpid())
@@ -78,9 +81,10 @@ def main() -> None:
         settings = Settings(
             data_dir=temp_root / "data",
             repository_roots=[temp_root],
-            embedding_provider="fake",
+            embedding_provider=args.embedding_provider,
             generation_provider="fake",
-            vector_provider="memory",
+            vector_provider=args.vector_provider,
+            embedding_dimensions=args.embedding_dimensions,
         )
         services = Services.create(settings)
         try:
@@ -170,7 +174,18 @@ def main() -> None:
                 "query_concurrency": concurrency,
             }
             args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            combined: dict[str, Any] = {}
+            if args.output.exists():
+                try:
+                    existing = json.loads(args.output.read_text(encoding="utf-8"))
+                    if isinstance(existing, dict):
+                        combined = existing
+                except (json.JSONDecodeError, OSError):
+                    pass
+            if "kind" in combined:
+                combined = {}
+            combined["performance_benchmark"] = payload
+            args.output.write_text(json.dumps(combined, indent=2), encoding="utf-8")
             print(json.dumps(payload, indent=2))
         finally:
             services.close()

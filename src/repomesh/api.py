@@ -319,7 +319,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def metrics() -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-    dashboard_dist = Path(__file__).resolve().parents[2] / "dashboard" / "dist"
+    dashboard_candidates = [
+        Path.cwd() / "dashboard" / "dist",
+        Path(__file__).resolve().parents[2] / "dashboard" / "dist",
+    ]
+    dashboard_dist = next(
+        (path for path in dashboard_candidates if path.exists()), dashboard_candidates[0]
+    )
     if dashboard_dist.exists():
         app.mount("/assets", StaticFiles(directory=dashboard_dist / "assets"), name="assets")
 
