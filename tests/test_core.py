@@ -28,6 +28,7 @@ def settings_for(tmp_path: Path, root: Path, **overrides: Any) -> Settings:
     values: dict[str, Any] = {
         "data_dir": tmp_path / "data",
         "repository_roots": [root],
+        "api_token": None,
         "embedding_provider": "fake",
         "generation_provider": "fake",
         "vector_provider": "memory",
