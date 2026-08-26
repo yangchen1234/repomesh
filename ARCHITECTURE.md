@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart LR
-    U[Dashboard / CLI / Mac control plane] -->|HTTP v1 + optional token| API[FastAPI worker API]
+    U[Dashboard / CLI / Mac control plane] -->|HTTP v1 + bearer token when remote| API[FastAPI worker API]
     API --> JOB[Durable job manager]
     JOB --> DISC[Git-aware discovery + allowlist]
     DISC --> CHUNK[Tree-sitter / line fallback chunker]
@@ -63,4 +63,4 @@ Index jobs are written before execution. Each transition and progress update per
 
 ## Future two-node design
 
-The Mac control plane should store user-facing workspace definitions, schedule Windows jobs with idempotency keys, poll durable status, aggregate metrics, retain evaluation history, and present richer repository/query management. Windows remains the path-owning compute plane. Network transport stays HTTP v1 over LAN/Tailscale with token authentication. Future work may add signed requests, per-client roles, event streaming, and a control-plane scheduler, but not a multi-node Qdrant cluster by implication.
+The Mac control plane may store user-facing workspace definitions, schedule Windows jobs with idempotency keys, poll durable status, aggregate metrics, retain evaluation history, and present richer repository/query management. Windows remains the path-owning compute plane. Network transport stays HTTP v1 over Tailscale with token authentication. Future work may add signed requests, per-client roles, event streaming, and a control-plane scheduler, but not a multi-node Qdrant cluster by implication.

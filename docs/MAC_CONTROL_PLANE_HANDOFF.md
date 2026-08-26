@@ -1,6 +1,6 @@
 # Mac control-plane handoff
 
-This is the secure integration contract for a Mac control plane calling one RepoMesh Windows compute node. RepoMesh v0.1 is a single-node vertical slice, not a highly available cluster.
+This is the secure integration contract for a Mac control surface calling one RepoMesh Windows compute node. RepoMesh v1.0 is a single-node vertical slice, not a highly available cluster.
 
 ## Security boundary and current readiness
 
@@ -9,10 +9,8 @@ This is the secure integration contract for a Mac control plane calling one Repo
 - A non-loopback bind is rejected unless `REPOMESH_API_TOKEN` is non-empty.
 - The Docker image uses an explicit internal wildcard flag because Compose publishes the host port to `127.0.0.1` only. That flag is not for native remote access.
 - `/v1/health` and `/metrics` are intentionally probeable without authentication. Every other `/v1` endpoint requires the configured token.
-- RepoMesh v0.1 does not terminate TLS. Prefer Tailscale encryption. Do not forward port 8787 on a router, expose it with a public tunnel, or bind it to all interfaces.
+- RepoMesh v1.0 does not terminate TLS. Prefer Tailscale encryption. Do not forward port 8787 on a router, expose it with a public tunnel, or bind it to all interfaces.
 - Never put a populated `.env`, token, authorization header, or token-bearing command transcript in Git, logs, screenshots, issue reports, or benchmark output.
-
-At the 2026-08-25 handoff check, Tailscale was installed on Windows but its backend state was `NeedsLogin`; it had no tailnet hostname or IP. RepoMesh therefore remained loopback-only and no RepoMesh firewall rule was opened. Complete Tailscale sign-in on both computers before following the private-network steps below.
 
 ## Start Windows locally
 
@@ -40,7 +38,7 @@ The local URLs are `http://127.0.0.1:8787`, `/docs`, and `/metrics`. Local mode 
 4. Set Windows process configuration without committing the values. `REPOMESH_HOST` must be the exact Windows Tailscale IP, not `0.0.0.0`:
 
    ```powershell
-   $env:REPOMESH_HOST = '<windows-tailscale-ip>'
+   $env:REPOMESH_HOST = '<WINDOWS_TAILSCALE_IP>'
    $env:REPOMESH_PORT = '8787'
    $env:REPOMESH_API_TOKEN = Read-Host -MaskInput 'RepoMesh API token'
    .\scripts\start-api.ps1
@@ -50,8 +48,8 @@ The local URLs are `http://127.0.0.1:8787`, `/docs`, and `/metrics`. Local mode 
 
    ```powershell
    .\scripts\configure-remote-firewall.ps1 `
-     -BindIP '<windows-tailscale-ip>' `
-     -RemoteAddress '<mac-tailscale-ip>' `
+     -BindIP '<WINDOWS_TAILSCALE_IP>' `
+     -RemoteAddress '<MAC_TAILSCALE_IP>' `
      -Port 8787
    ```
 
@@ -60,7 +58,7 @@ The local URLs are `http://127.0.0.1:8787`, `/docs`, and `/metrics`. Local mode 
 6. On the Mac, set the two required values in a secure shell/session or Keychain-backed launcher:
 
    ```bash
-   export REPOMESH_BASE_URL='http://<windows-tailscale-ip>:8787'
+   export REPOMESH_BASE_URL='http://<WINDOWS_TAILSCALE_IP>:8787'
    read -s REPOMESH_API_TOKEN && export REPOMESH_API_TOKEN
    python3 scripts/test-remote-client.py
    ```
@@ -75,14 +73,20 @@ Use this only on a trusted, private, non-guest LAN. Native HTTP exposes the bear
 2. Set `REPOMESH_HOST` to the exact Windows private-LAN IP and set a strong `REPOMESH_API_TOKEN` outside Git.
 3. Run `configure-remote-firewall.ps1` with the exact Windows LAN IP and exact Mac LAN IP. A narrowly scoped private CIDR may be used only if the Mac address cannot be stable.
 4. Start with `scripts/start-api.ps1`. The launcher rejects a wildcard and rejects a non-loopback bind without a token.
-5. Set the Mac base URL to `http://<windows-lan-ip>:8787` and run the remote smoke client.
+5. Set the Mac base URL to the exact private LAN IP reported by Windows and run the remote smoke client.
 6. Confirm from a third, unapproved LAN device that port 8787 is not reachable. Keep the router free of any inbound mapping for that port.
 
 ## Transfer the repository with Git history
 
-The preferred long-term handoff is a repository in the user's own private GitHub account. A push is an external write and must not occur until the user explicitly authorizes the destination URL. Never include a populated `.env` or secret in that repository.
+Clone the public release repository. Never include a populated `.env` or secret in a fork, issue, or support bundle:
 
-Without push authorization, use the verified `git bundle` produced for the handoff. A bundle preserves commits, branches, tags, and other included refs; a plain source-folder copy does not. On the Mac:
+```bash
+git clone https://github.com/primjim1234/repomesh.git
+cd repomesh
+git show v1.0.0 --no-patch
+```
+
+For an offline handoff, a verified `git bundle` preserves commits, branches, tags, and other included refs; a plain source-folder copy does not:
 
 ```bash
 git bundle verify /path/to/repomesh-mac-handoff.bundle
@@ -91,15 +95,15 @@ cd repomesh
 git log --oneline --decorate -5
 ```
 
-After a private GitHub remote is authorized and created by the user, add it from the cloned repository and push normally. Do not put credentials in the remote URL.
+Do not put credentials in a remote URL.
 
 ## Mac environment contract
 
 The Mac client uses these names exactly:
 
 ```text
-REPOMESH_BASE_URL=http://<exact-windows-private-ip>:8787
-REPOMESH_API_TOKEN=<secret stored outside source control>
+REPOMESH_BASE_URL=http://<WINDOWS_TAILSCALE_IP>:8787
+REPOMESH_API_TOKEN=<REPOMESH_API_TOKEN>
 ```
 
 The provided smoke client also accepts optional non-secret controls:
@@ -109,7 +113,7 @@ REPOMESH_REMOTE_SEARCH_MODE=hybrid
 REPOMESH_REMOTE_QUERY=Where is API authentication enforced?
 ```
 
-Send `Authorization: Bearer <token>` on every protected request. `X-API-Token` is supported for compatibility, but bearer authentication is the stable Mac convention. Never put a token in a query string.
+Send `Authorization: Bearer <REPOMESH_API_TOKEN>` on every protected request. `X-API-Token` is supported for compatibility, but bearer authentication is the stable Mac convention. Never put a token in a query string.
 
 ## Transport and compatibility
 
@@ -137,7 +141,7 @@ curl --fail --silent --show-error \
 ```json
 {
   "node_id": "WINDOWS-NODE",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "uptime_seconds": 913.42,
   "qdrant_status": "healthy",
   "ollama_status": "healthy",
@@ -190,7 +194,7 @@ curl --fail --silent --show-error \
   {
     "id": "9f4e6f2e-9f0c-54d8-9df5-2da10a5cb641",
     "name": "repomesh",
-    "root": "D:/source/repomesh",
+    "root": "<REPOSITORY_PATH>",
     "commit_sha": "0123456789abcdef0123456789abcdef01234567",
     "status": "indexed",
     "indexed_files": 69,
@@ -209,7 +213,7 @@ An empty catalog is `200 OK` with `[]`.
 curl --fail --silent --show-error \
   -H "Authorization: Bearer $REPOMESH_API_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"path":"D:\\source\\project","name":"Project"}' \
+  -d '{"path":"<REPOSITORY_PATH>","name":"Project"}' \
   "$REPOMESH_BASE_URL/v1/repositories"
 ```
 
@@ -219,7 +223,7 @@ curl --fail --silent --show-error \
 {
   "id": "d1436c61-67de-5847-b90e-c87b12d99e49",
   "name": "Project",
-  "root": "D:/source/project",
+  "root": "<REPOSITORY_PATH>",
   "commit_sha": "fedcba9876543210fedcba9876543210fedcba98",
   "status": "registered",
   "indexed_files": 0,
@@ -285,7 +289,7 @@ curl --fail --silent --show-error \
   "repository": {
     "id": "d1436c61-67de-5847-b90e-c87b12d99e49",
     "name": "Project",
-    "root": "D:/source/project",
+    "root": "<REPOSITORY_PATH>",
     "commit_sha": "fedcba9876543210fedcba9876543210fedcba98",
     "status": "indexed",
     "indexed_files": 42,

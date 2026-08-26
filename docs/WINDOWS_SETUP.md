@@ -14,7 +14,7 @@ The application itself runs natively; Qdrant runs in Docker Desktop. WSL is opti
 ## Install and configure
 
 ```powershell
-git clone <your-existing-repository-url> repomesh
+git clone https://github.com/primjim1234/repomesh.git
 Set-Location repomesh
 Copy-Item .env.example .env
 .\scripts\setup.ps1
@@ -25,8 +25,8 @@ Copy-Item .env.example .env
 Edit `.env` so `REPOMESH_REPOSITORY_ROOTS` contains only roots the node may read. Do not put API tokens in Git. A semicolon-separated Windows value or JSON array is accepted:
 
 ```dotenv
-REPOMESH_REPOSITORY_ROOTS=["D:\\source","C:\\work"]
-REPOMESH_API_TOKEN=replace-with-a-long-random-value
+REPOMESH_REPOSITORY_ROOTS=["<REPOSITORY_PATH>"]
+REPOMESH_API_TOKEN=<REPOMESH_API_TOKEN>
 ```
 
 Real providers:
@@ -88,7 +88,7 @@ bash scripts/test.sh
 
 ## Private network binding
 
-Leave `REPOMESH_HOST=127.0.0.1` for standalone use. For Mac access, bind to the Windows LAN or Tailscale address, enable the API token, and add a Windows Firewall inbound rule scoped to the private interface and Mac address. Never forward port 8787 from a public router. Test from the Mac with `/v1/health` before registering repositories.
+Leave `REPOMESH_HOST=127.0.0.1` for standalone use. For Mac access, set `REPOMESH_HOST=<WINDOWS_TAILSCALE_IP>`, configure `REPOMESH_API_TOKEN=<REPOMESH_API_TOKEN>`, and add a Windows Firewall inbound rule whose remote address is `<MAC_TAILSCALE_IP>`. Never forward port 8787 from a public router. Run `scripts/test-remote-client.py` from the Mac before registering additional repositories.
 
 ## Troubleshooting
 

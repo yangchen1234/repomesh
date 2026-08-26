@@ -7,7 +7,7 @@
 - Version prefix: `/v1`. Fields may be added compatibly; removal/semantic changes require `/v2`.
 - Paths in payloads are repository-relative with `/` separators. Lines are one-based and inclusive.
 - OpenAPI is served at `/openapi.json`; Swagger UI is `/docs`.
-- Optional authentication: `Authorization: Bearer <token>` or `X-API-Token: <token>`. Health and metrics are intentionally unprotected for local probes; other v1 operations require the token when configured.
+- Authentication: `Authorization: Bearer <REPOMESH_API_TOKEN>` or `X-API-Token: <REPOMESH_API_TOKEN>`. Health and metrics are intentionally unprotected for private probes; other v1 operations require the token when configured. A token is mandatory for supported non-loopback native binds.
 
 Errors use `{"detail":"..."}`. Provider failures return `503` and `degraded: true`; validation returns `400` or `422`; missing resources return `404`; conflicting idempotency use returns `409`.
 
@@ -28,7 +28,7 @@ Lists repositories with ID, name, Windows root, current indexed commit, state, i
 ### `POST /v1/repositories`
 
 ```json
-{"path":"D:\\source\\project","name":"optional display name"}
+{"path":"<REPOSITORY_PATH>","name":"optional display name"}
 ```
 
 The path must be an allowlisted Git root. Re-registering the same normalized root returns the existing repository.
