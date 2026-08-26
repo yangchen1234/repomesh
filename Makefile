@@ -20,7 +20,8 @@ dashboard:
 
 test:
 	.venv/bin/python -m pytest
-	.venv/bin/ruff check src tests evaluation benchmarks
+	.venv/bin/ruff check src tests evaluation benchmarks scripts/test-remote-client.py
+	.venv/bin/mypy src/repomesh
 	cd dashboard && npm test && npm run build
 
 evaluate:
@@ -34,4 +35,3 @@ demo:
 
 down:
 	docker compose down
-

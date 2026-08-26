@@ -4,11 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "repomesh"
-version = "0.1.0"
-description = "Local, code-aware hybrid RAG compute node"
+version = "1.0.0"
+description = "Local-first codebase RAG with incremental indexing, hybrid retrieval, and cited answers"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}
+authors = [{name = "Yang Chen"}]
 dependencies = [
   "fastapi>=0.116,<1",
   "uvicorn[standard]>=0.35,<1",
@@ -22,6 +23,12 @@ dependencies = [
   "prometheus-client>=0.22,<1",
   "structlog>=25.4,<26",
 ]
+
+[project.urls]
+Homepage = "https://github.com/primjim1234/repomesh"
+Repository = "https://github.com/primjim1234/repomesh"
+Documentation = "https://github.com/primjim1234/repomesh#readme"
+Issues = "https://github.com/primjim1234/repomesh/issues"
 
 [project.optional-dependencies]
 dev = [

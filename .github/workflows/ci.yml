@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Backend tests
+        run: python -m pytest
+
+      - name: Ruff
+        run: ruff check src tests evaluation benchmarks scripts/test-remote-client.py
+
+      - name: mypy
+        run: mypy src/repomesh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install Dashboard dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Dashboard tests
+        working-directory: dashboard
+        run: npm test
+
+      - name: TypeScript and production build
+        working-directory: dashboard
+        run: npm run build
