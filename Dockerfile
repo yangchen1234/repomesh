@@ -13,5 +13,4 @@ COPY src/ src/
 RUN pip install --no-cache-dir .
 COPY --from=dashboard /dashboard/dist dashboard/dist
 EXPOSE 8787
-CMD ["repomesh", "serve"]
-
+CMD ["repomesh", "serve", "--container-loopback-publish"]

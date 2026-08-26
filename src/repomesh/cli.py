@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 
 import uvicorn
 
@@ -14,7 +15,15 @@ from repomesh.services import Services
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="repomesh")
     commands = root.add_subparsers(dest="command", required=True)
-    commands.add_parser("serve")
+    serve = commands.add_parser("serve")
+    serve.add_argument(
+        "--container-loopback-publish",
+        action="store_true",
+        help=(
+            "allow an internal wildcard bind when the container port is published "
+            "to host loopback only"
+        ),
+    )
     register = commands.add_parser("register")
     register.add_argument("path")
     index = commands.add_parser("index")
@@ -27,10 +36,34 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
+def validate_serve_bind(settings: Settings, container_loopback_publish: bool) -> None:
+    """Reject ambiguous remote exposure before Uvicorn opens a socket."""
+    try:
+        address = ipaddress.ip_address(settings.host.strip("[]"))
+    except ValueError as exc:
+        raise SystemExit(
+            "REPOMESH_HOST must be an exact loopback, Tailscale, or LAN IP address"
+        ) from exc
+
+    if address.is_loopback:
+        return
+    if address.is_unspecified:
+        if container_loopback_publish:
+            return
+        raise SystemExit(
+            "refusing wildcard REPOMESH_HOST; bind to an exact Tailscale or LAN IP"
+        )
+    if not settings.api_token or not settings.api_token.strip():
+        raise SystemExit(
+            "REPOMESH_API_TOKEN is required when REPOMESH_HOST is not loopback"
+        )
+
+
 def main() -> None:
     args = parser().parse_args()
     settings = Settings()
     if args.command == "serve":
+        validate_serve_bind(settings, args.container_loopback_publish)
         uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
         return
     services = Services.create(settings)
