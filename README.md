@@ -1,6 +1,6 @@
 # RepoMesh
 
-[![CI](https://github.com/primjim1234/repomesh/actions/workflows/ci.yml/badge.svg)](https://github.com/primjim1234/repomesh/actions/workflows/ci.yml)
+[![CI](https://github.com/yangchen1234/repomesh/actions/workflows/ci.yml/badge.svg)](https://github.com/yangchen1234/repomesh/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB.svg)](https://www.python.org/)
 
@@ -98,7 +98,7 @@ The API and dashboard are separate surfaces. Windows owns repository paths, inde
 Prerequisites: Git, Python 3.12+, Docker Desktop, Node.js LTS, and Ollama.
 
 ```powershell
-git clone https://github.com/primjim1234/repomesh.git
+git clone https://github.com/yangchen1234/repomesh.git
 Set-Location repomesh
 Copy-Item .env.example .env
 .\scripts\setup.ps1

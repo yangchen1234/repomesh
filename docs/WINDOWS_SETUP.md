@@ -14,7 +14,7 @@ The application itself runs natively; Qdrant runs in Docker Desktop. WSL is opti
 ## Install and configure
 
 ```powershell
-git clone https://github.com/primjim1234/repomesh.git
+git clone https://github.com/yangchen1234/repomesh.git
 Set-Location repomesh
 Copy-Item .env.example .env
 .\scripts\setup.ps1

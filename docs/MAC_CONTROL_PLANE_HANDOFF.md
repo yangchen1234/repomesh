@@ -81,7 +81,7 @@ Use this only on a trusted, private, non-guest LAN. Native HTTP exposes the bear
 Clone the public release repository. Never include a populated `.env` or secret in a fork, issue, or support bundle:
 
 ```bash
-git clone https://github.com/primjim1234/repomesh.git
+git clone https://github.com/yangchen1234/repomesh.git
 cd repomesh
 git show v1.0.0 --no-patch
 ```
