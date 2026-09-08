@@ -245,7 +245,7 @@ python3 scripts/test-remote-client.py
 unset REPOMESH_API_TOKEN
 ```
 
-The smoke client calls health, capabilities, repositories, and hybrid search; it never prints the token and returns nonzero on network or authentication failure. The v1.0 release was also verified with a real authenticated Mac → Tailscale → Windows hybrid-search smoke (`status=passed`, exit code `0`). See the complete [Mac handoff](docs/MAC_CONTROL_PLANE_HANDOFF.md).
+The smoke client calls health, capabilities, repositories, and hybrid search; it never prints the token and returns nonzero on network or authentication failure. The v1.0 release was also verified with a real authenticated Mac â†’ Tailscale â†’ Windows hybrid-search smoke (`status=passed`, exit code `0`). See the complete [Mac handoff](docs/MAC_CONTROL_PLANE_HANDOFF.md).
 
 ## Evaluation
 
@@ -267,7 +267,7 @@ These are measured results from one Windows 11 workstation using Docker Desktop,
 | Full throughput | 2.39 files/s; 15.32 chunks/s |
 | Incremental add + modify + delete | 0.951 s; 2 indexed; 1 deleted; 0 errors |
 | One-file incremental update | 0.374 s; 1 indexed; 68 skipped |
-| One-file/full wall-time ratio | 77.25× |
+| One-file/full wall-time ratio | 77.25Ã— |
 | Hybrid query concurrency 1 | p50 249.40 ms; p95 2319.92 ms |
 | Hybrid query concurrency 5 | p50 513.07 ms; p95 642.79 ms |
 | Hybrid query concurrency 10 | p50 935.61 ms; p95 1122.08 ms |
@@ -283,6 +283,12 @@ Reproduce either the deterministic baseline or real-provider run:
 .\scripts\evaluate.ps1 --embedding-provider ollama --vector-provider qdrant --embedding-dimensions 768
 .\scripts\benchmark.ps1 --embedding-provider ollama --vector-provider qdrant --embedding-dimensions 768
 ```
+
+## Distributed worker results
+
+With PostgreSQL coordination and deterministic embeddings, 24 fixture repositories (1,440 files / 4,512 chunks) completed in 10.123s / 5.886s / 4.358s / 4.656s at 1 / 2 / 4 / 8 workers. Four workers delivered **2.32×** one-worker throughput in this measured Windows run. All three abrupt-kill trials recovered. Eight workers were slower than four. Four containers with real Qdrant and container-kill recovery passed in Linux CI.
+
+See [methodology and raw evidence](BENCHMARKS.md#distributed-execution-measurements--2026-09-08) and the [engineering report](docs/DISTRIBUTED_REPORT.md). These are fixture measurements, not linear-scaling or production Ollama throughput claims.
 
 ## Reliability behavior
 
@@ -347,4 +353,4 @@ SQLite schema/FTS5 initialization remains in `src/repomesh/db.py`. PostgreSQL us
 
 RepoMesh's application source, schema, chunk identifiers, recovery flow, fusion logic, evaluation corpus, Dashboard, scripts, and documentation were implemented independently. The architecture references listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) were not copied or adapted.
 
-Copyright © 2026 Yang Chen. RepoMesh is released under the [MIT License](LICENSE). Dependency and model licenses remain governed by their upstream projects.
+Copyright Â© 2026 Yang Chen. RepoMesh is released under the [MIT License](LICENSE). Dependency and model licenses remain governed by their upstream projects.
