@@ -1,4 +1,4 @@
-.PHONY: setup deps models api dashboard test evaluate benchmark demo down
+.PHONY: setup deps models api worker dashboard test evaluate benchmark demo down
 
 setup:
 	python -m venv .venv
@@ -6,7 +6,7 @@ setup:
 	cd dashboard && npm install
 
 deps:
-	docker compose up -d --wait qdrant
+	docker compose up -d --wait postgres qdrant
 
 models:
 	ollama pull nomic-embed-text
@@ -14,6 +14,9 @@ models:
 
 api:
 	.venv/bin/repomesh serve
+
+worker:
+	.venv/bin/repomesh worker
 
 dashboard:
 	cd dashboard && npm run dev

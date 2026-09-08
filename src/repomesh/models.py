@@ -36,7 +36,8 @@ class Repository(BaseModel):
 
 class IndexRequest(BaseModel):
     mode: Literal["full", "incremental"] = "incremental"
-    idempotency_key: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=255)
+    priority: int = Field(default=0, ge=-100, le=100)
     wait: bool = False
 
 
@@ -54,6 +55,13 @@ class Job(BaseModel):
     skipped_files: int = 0
     error_count: int = 0
     attempt: int = 0
+    max_attempts: int = 3
+    priority: int = 0
+    worker_id: str | None = None
+    lease_generation: int = 0
+    available_at: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
     idempotency_key: str | None = None
     heartbeat_at: str | None = None
     lease_expires_at: str | None = None
@@ -147,6 +155,8 @@ class HealthResponse(BaseModel):
     active_jobs: int
     queued_jobs: int
     degraded_mode: bool
+    postgres_status: str = "unknown"
+    active_workers: int = 0
 
 
 class CapabilitiesResponse(BaseModel):

@@ -8,15 +8,24 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import httpx
+import psycopg
 import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Histogram,
+    generate_latest,
+)
+from psycopg_pool import PoolTimeout
 
 from repomesh import __version__
 from repomesh.config import Settings
+from repomesh.coordination.metrics import CoordinationCollector
 from repomesh.models import (
     AnswerRequest,
     AnswerResponse,
@@ -49,19 +58,19 @@ REQUEST_LATENCY = Histogram(
     "repomesh_http_request_duration_seconds", "HTTP request duration", ["path"]
 )
 SEARCH_LATENCY = Histogram("repomesh_search_duration_seconds", "Search latency", ["mode"])
-INDEXED_FILES = Counter("repomesh_indexed_files_total", "Files indexed")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     configure_logging()
     services = Services.create(settings)
+    coordination_metrics = CollectorRegistry()
+    coordination_metrics.register(CoordinationCollector(services.coordination))
     started_at = time.monotonic()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        recovered = services.jobs.recover()
-        logger.info("repomesh_started", node_id=settings.node_id, recovered_jobs=recovered)
+        logger.info("repomesh_started", node_id=settings.node_id, role="control_plane")
         yield
         services.close()
 
@@ -93,8 +102,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             logger.exception("request_failed", method=request.method, path=request.url.path)
             raise
         elapsed = time.perf_counter() - start
-        REQUEST_COUNT.labels(request.method, request.url.path, str(response.status_code)).inc()
-        REQUEST_LATENCY.labels(request.url.path).observe(elapsed)
+        route = request.scope.get("route")
+        metric_path = getattr(route, "path", "unmatched")
+        REQUEST_COUNT.labels(request.method, metric_path, str(response.status_code)).inc()
+        REQUEST_LATENCY.labels(metric_path).observe(elapsed)
         logger.info(
             "request_completed",
             method=request.method,
@@ -125,6 +136,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def unavailable_handler(_request: Request, exc: ProviderUnavailable) -> JSONResponse:
         return JSONResponse(status_code=503, content={"detail": str(exc), "degraded": True})
 
+    async def coordination_unavailable(_request: Request, _exc: Exception) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "PostgreSQL coordination unavailable", "degraded": True},
+        )
+
+    app.add_exception_handler(psycopg.Error, coordination_unavailable)
+    app.add_exception_handler(PoolTimeout, coordination_unavailable)
+
     @app.get("/v1/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         qdrant_status = "not_configured"
@@ -138,13 +158,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except httpx.HTTPError:
             ollama_status = "unavailable"
-        active, queued = services.database.job_counts()
+        postgres_status = "healthy"
+        try:
+            snapshot = services.coordination.snapshot()
+            active, queued, active_workers = (
+                snapshot["active_jobs"],
+                snapshot["queue_depth"],
+                snapshot["active_workers"],
+            )
+        except (psycopg.Error, PoolTimeout):
+            postgres_status = "unavailable"
+            active, queued, active_workers = 0, 0, 0
         required_ollama = (
             settings.embedding_provider == "ollama" or settings.generation_provider == "ollama"
         )
         required_qdrant = settings.vector_provider == "qdrant"
-        degraded = (required_ollama and ollama_status != "healthy") or (
-            required_qdrant and qdrant_status != "healthy"
+        degraded = (
+            (required_ollama and ollama_status != "healthy")
+            or (required_qdrant and qdrant_status != "healthy")
+            or postgres_status != "healthy"
         )
         return HealthResponse(
             node_id=settings.node_id,
@@ -157,6 +189,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             active_jobs=active,
             queued_jobs=queued,
             degraded_mode=degraded,
+            postgres_status=postgres_status,
+            active_workers=active_workers,
         )
 
     @app.get("/v1/capabilities", response_model=CapabilitiesResponse)
@@ -198,12 +232,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not services.database.repository(repository_id):
             raise HTTPException(status_code=404, detail="repository not found")
         try:
-            job = services.jobs.submit(repository_id, body.mode, body.idempotency_key)
+            job = services.jobs.submit(
+                repository_id, body.mode, body.idempotency_key, body.priority
+            )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if body.wait:
             job = services.jobs.wait(job.id)
-            INDEXED_FILES.inc(job.indexed_files)
         return job
 
     @app.get("/v1/repositories/{repository_id}/status")
@@ -213,13 +248,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         repository = services.database.repository(repository_id)
         if not repository:
             raise HTTPException(status_code=404, detail="repository not found")
-        latest = services.database.fetchone(
-            "SELECT * FROM jobs WHERE repository_id=? ORDER BY created_at DESC LIMIT 1",
-            (repository_id,),
-        )
+        latest = services.coordination.latest_job(repository_id)
         return {
             "repository": repository.model_dump(),
-            "latest_job": Job.model_validate(latest).model_dump() if latest else None,
+            "latest_job": latest.model_dump() if latest else None,
         }
 
     @app.post("/v1/search", response_model=SearchResponse)
@@ -303,7 +335,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/jobs/{job_id}", response_model=Job)
     def get_job(job_id: str, _auth: None = Depends(require_token)) -> Job:
-        job = services.database.job(job_id)
+        job = services.coordination.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="job not found")
         return job
@@ -317,7 +349,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/metrics")
     def metrics() -> Response:
-        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+        return Response(
+            generate_latest() + generate_latest(coordination_metrics),
+            media_type=CONTENT_TYPE_LATEST,
+        )
+
+    @app.get("/v1/workers")
+    def workers(_auth: None = Depends(require_token)) -> list[dict[str, Any]]:
+        return services.coordination.list_workers()
 
     dashboard_candidates = [
         Path.cwd() / "dashboard" / "dist",
@@ -336,4 +375,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+# Use `repomesh serve` or `uvicorn repomesh.api:create_app --factory`.
+# Importing this module must not create storage, connections or executor threads.

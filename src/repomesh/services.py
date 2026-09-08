@@ -7,6 +7,7 @@ import structlog
 
 from repomesh.chunking import CodeChunker
 from repomesh.config import Settings
+from repomesh.coordination.repository import CoordinationRepository
 from repomesh.db import Database
 from repomesh.indexing import RepositoryIndexer
 from repomesh.jobs import JobManager
@@ -46,6 +47,7 @@ class Services:
     vector_store: VectorStore
     indexer: RepositoryIndexer
     jobs: JobManager
+    coordination: CoordinationRepository
     retriever: Retriever
 
     @classmethod
@@ -83,10 +85,29 @@ class Services:
         indexer = RepositoryIndexer(
             database, chunker, embedder, vector_store, settings.max_file_bytes
         )
-        jobs = JobManager(database, indexer, settings.job_lease_seconds, settings.job_max_retries)
+        coordination = CoordinationRepository(settings)
+        try:
+            coordination.migrate()
+        except Exception:
+            coordination.close()
+            database.close()
+            raise
+        jobs = JobManager(coordination)
         retriever = Retriever(database, embedder, vector_store, settings.rrf_k)
-        return cls(settings, database, embedder, generator, vector_store, indexer, jobs, retriever)
+        return cls(
+            settings,
+            database,
+            embedder,
+            generator,
+            vector_store,
+            indexer,
+            jobs,
+            coordination,
+            retriever,
+        )
 
     def close(self) -> None:
-        self.jobs.shutdown()
+        self.coordination.close()
+        if isinstance(self.vector_store, QdrantVectorStore):
+            self.vector_store.client.close()
         self.database.close()

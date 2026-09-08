@@ -8,10 +8,12 @@ import shutil
 import statistics
 import subprocess
 import tempfile
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from benchmarks.harness import WorkerGroup, drop_benchmark_schema
 from repomesh.config import Settings
 from repomesh.models import SearchMode
 from repomesh.providers import QdrantVectorStore
@@ -87,6 +89,7 @@ def main() -> None:
     )
     cases = json.loads((Path(__file__).with_name("cases.json")).read_text(encoding="utf-8"))
     settings = Settings(
+        postgres_schema="bench_" + uuid.uuid4().hex,
         data_dir=args.data_dir or temporary_root / "data",
         repository_roots=[repository_root.parent],
         embedding_provider=args.embedding_provider,
@@ -96,7 +99,9 @@ def main() -> None:
         qdrant_collection=f"repomesh_evaluation_{os.getpid()}",
     )
     services = Services.create(settings)
+    workers = WorkerGroup(services)
     try:
+        workers.__enter__()
         repository = register_repository(repository_root, "RepoMesh evaluation corpus")
         if not services.database.repository(repository.id):
             services.database.add_repository(repository)
@@ -180,7 +185,9 @@ def main() -> None:
                 services.vector_store.client.delete_collection(services.vector_store.collection)
             except Exception:
                 pass
+        workers.close()
         services.close()
+        drop_benchmark_schema(settings)
         temporary.cleanup()
 
 

@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 from qdrant_client import QdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 
 class ProviderUnavailable(RuntimeError):
@@ -197,12 +198,19 @@ class QdrantVectorStore(VectorStore):
 
     def ensure_collection(self) -> None:
         if not self.client.collection_exists(self.collection):
-            self.client.create_collection(
-                self.collection,
-                vectors_config=models.VectorParams(
-                    size=self.dimensions, distance=models.Distance.COSINE
-                ),
-            )
+            try:
+                self.client.create_collection(
+                    self.collection,
+                    vectors_config=models.VectorParams(
+                        size=self.dimensions, distance=models.Distance.COSINE
+                    ),
+                )
+            except UnexpectedResponse as exc:
+                # Concurrent workers may create the same collection after our existence check.
+                if exc.status_code not in {400, 409} or not self.client.collection_exists(
+                    self.collection
+                ):
+                    raise
 
     def upsert(self, chunks: list[dict[str, Any]], vectors: list[list[float]]) -> None:
         try:

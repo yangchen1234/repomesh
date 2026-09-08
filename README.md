@@ -6,7 +6,7 @@
 
 **RepoMesh is a local-first codebase RAG platform that incrementally indexes repositories and provides hybrid code search and cited answers across a private cross-device deployment.**
 
-RepoMesh combines code-aware Tree-sitter chunking, SQLite FTS5, Qdrant, Ollama, and a durable FastAPI worker into a complete Windows-first vertical slice. It runs standalone on one machine and exposes a stable `/v1` API that a Mac or another trusted control surface can call over Tailscale.
+RepoMesh combines code-aware Tree-sitter chunking, SQLite FTS5, Qdrant, Ollama, and PostgreSQL-coordinated independent workers into a complete Windows-first vertical slice. It runs independent worker processes on shared local repository/index volumes and exposes a stable `/v1` API that a Mac or another trusted control surface can call over Tailscale.
 
 ## What problem does it solve?
 
@@ -23,8 +23,8 @@ RepoMesh combines code-aware Tree-sitter chunking, SQLite FTS5, Qdrant, Ollama, 
 - **Incremental reconciliation:** SHA-256 file manifests, deterministic chunk IDs, add/modify/delete handling, and duplicate-safe vector synchronization.
 - **Three retrieval modes:** SQLite FTS5 lexical search, Qdrant dense search, and Reciprocal Rank Fusion (RRF) hybrid search.
 - **Cited local answers:** Ollama generation constrained to retrieved evidence, with structured citations and `[path:start-end]` labels.
-- **Durable jobs:** persisted progress, heartbeat, lease expiry, exponential backoff, per-file isolation, cancellation, restart recovery, and idempotency keys.
-- **Compute-node API:** FastAPI, Pydantic, OpenAPI, optional local/required remote token authentication, Prometheus metrics, and JSON logs.
+- **Distributed jobs:** PostgreSQL atomic claims, independent workers, lease generations, fenced updates, durable exponential retries, repository exclusion, cross-process cancellation and crash recovery.
+- **Control-plane API:** FastAPI, Pydantic, OpenAPI, optional local/required remote token authentication, Prometheus metrics, and JSON logs.
 - **Usable dashboard:** node health, repositories, indexing progress, all retrieval modes, cited answers, latency, and degraded-state visibility.
 - **Reproducible evaluation:** a committed 25-query fixture corpus and raw benchmark sessions.
 
@@ -32,32 +32,22 @@ RepoMesh combines code-aware Tree-sitter chunking, SQLite FTS5, Qdrant, Ollama, 
 
 ```mermaid
 flowchart LR
-    MAC[Mac client / control surface]
-    TS[Tailscale private network]
-
-    subgraph WIN[Windows compute node]
-        API[FastAPI /v1 API]
-        WORKER[Durable job worker]
-        DISC[Git discovery + SHA reconciliation]
-        CHUNK[Tree-sitter + line fallback]
-        RET[Lexical / dense / RRF retrieval]
-        ANSWER[Citation-constrained answers]
-        SQLITE[(SQLite manifest, jobs, FTS5)]
-        QDRANT[(Qdrant vectors)]
-        OLLAMA[Ollama embeddings + generation]
-    end
-
-    MAC -->|Bearer token| TS --> API
-    API --> WORKER --> DISC --> CHUNK
-    CHUNK --> SQLITE
-    CHUNK --> OLLAMA --> QDRANT
-    API --> RET
+    CLIENT[Dashboard / CLI / remote client] --> API[FastAPI control plane]
+    API --> PG[(PostgreSQL jobs / workers / leases)]
+    W1[Independent worker A] --> PG
+    W2[Independent worker B] --> PG
+    WN[Independent worker N] --> PG
+    W1 --> INDEX[Git discovery / chunking / incremental indexing]
+    W2 --> INDEX
+    WN --> INDEX
+    INDEX --> SQLITE[(SQLite manifests / chunks / FTS5)]
+    INDEX --> EMB[Embedding provider] --> QDRANT[(Qdrant vectors)]
+    API --> RET[Lexical / dense / RRF / cited answers]
     RET --> SQLITE
     RET --> QDRANT
-    API --> ANSWER --> OLLAMA
 ```
 
-The API and dashboard are separate surfaces. Windows owns repository paths, indexing, retrieval, and provider state; remote clients only use versioned HTTP contracts.
+The API and dashboard are separate surfaces. Workers share the same local repository paths and SQLite data volume; remote clients use versioned HTTP contracts. PostgreSQL coordinates execution. This is not a distributed SQLite or Qdrant deployment. See [the distributed design](docs/DISTRIBUTED_DESIGN.md) for the failure model and fencing boundaries.
 
 ## Data flows
 
@@ -67,7 +57,7 @@ The API and dashboard are separate surfaces. Windows owns repository paths, inde
 2. Discover tracked and unignored files, then apply defense-in-depth filters.
 3. Compare file SHA-256 values with the SQLite manifest.
 4. Chunk only added or changed files by symbol, falling back to bounded line windows.
-5. Persist lexical chunks and job/file state in SQLite; embed and upsert vectors in Qdrant.
+5. Persist lexical chunks and file state in SQLite, job state in PostgreSQL; embed and upsert vectors in Qdrant.
 6. Remove deleted-file chunks from both stores. Re-running the same state produces no duplicate chunk IDs.
 
 ### Query and answer
@@ -83,7 +73,8 @@ The API and dashboard are separate surfaces. Windows owns repository paths, inde
 | Area | Implementation |
 |---|---|
 | API and schemas | FastAPI, Pydantic, Uvicorn |
-| Repository metadata and jobs | SQLite WAL |
+| Repository metadata, manifests and chunks | SQLite WAL |
+| Jobs, workers, claims, leases, fencing and retries | PostgreSQL |
 | Lexical retrieval | SQLite FTS5 |
 | Vector retrieval | Qdrant + `qdrant-client` |
 | Code parsing | Tree-sitter language pack |
@@ -104,7 +95,7 @@ Copy-Item .env.example .env
 .\scripts\setup.ps1
 ```
 
-Start Qdrant and prepare the real models used for the published evaluation:
+Start PostgreSQL and Qdrant and prepare the real models used for the published evaluation:
 
 ```powershell
 .\scripts\start-dependencies.ps1
@@ -127,6 +118,14 @@ Keep `REPOMESH_HOST=127.0.0.1` for standalone use, set `REPOMESH_REPOSITORY_ROOT
 
 ```powershell
 .\scripts\start-api.ps1
+```
+
+In another terminal, start one or more independent workers using the same `.env`:
+
+```powershell
+.\scripts\start-worker.ps1
+# Optional explicit identity in another terminal:
+.\scripts\start-worker.ps1 --worker-id worker-b
 ```
 
 - Dashboard: <http://127.0.0.1:8787/>
@@ -182,13 +181,38 @@ The response contains retrieved chunks, structured citations, evidence sufficien
 
 ```bash
 bash scripts/setup.sh
-docker compose up -d --wait qdrant
+docker compose up -d --wait postgres qdrant
 ollama pull nomic-embed-text
 ollama pull qwen2.5-coder:14b
 .venv/bin/repomesh serve
+# In another terminal with the same configuration:
+.venv/bin/repomesh worker
 ```
 
 The `Makefile` provides `setup`, `deps`, `models`, `api`, `dashboard`, `test`, `evaluate`, `benchmark`, `demo`, and `down` targets.
+
+## Container workers
+
+```bash
+docker compose up --build --scale worker=4
+```
+
+Compose runs PostgreSQL, Qdrant, the API, and four independently identified worker
+containers. They share a read-only repository mount and one local SQLite data
+volume. Register `/repositories/repomesh` through the API. Set
+`REPOMESH_REPOSITORIES_DIR` to change the host source mount; all replicas must see
+the same container paths. Do not use NFS/SMB for SQLite WAL or assume remote
+machines can read local Windows paths.
+
+`GET /v1/workers` lists live/offline workers. `wait=true` polls PostgreSQL for up
+to 300 seconds, then returns the current job if still unfinished. No API execution
+fallback exists. Use `wait=false` plus polling for long jobs or when behind an HTTP
+proxy with shorter timeouts.
+
+To upgrade existing data: stop the old API, set `REPOMESH_POSTGRES_DSN`, run
+`repomesh import-legacy-jobs`, then start the new API and workers. Import preserves
+historical terminal jobs and queues unfinished work for incremental recovery.
+SQLite jobs remain historical; new jobs exist only in PostgreSQL.
 
 ## Private cross-device deployment
 
@@ -262,7 +286,7 @@ Reproduce either the deterministic baseline or real-provider run:
 
 ## Reliability behavior
 
-- **Lease recovery:** unfinished queued/running/retrying jobs are recovered at startup and resume incrementally.
+- **Lease recovery:** workers reclaim expired jobs without an API restart, increment the lease generation, and resume incrementally.
 - **Idempotency:** reusing an idempotency key for the same logical request returns the original job; conflicting reuse is rejected.
 - **Per-file isolation:** a failed file increments errors without aborting unrelated files.
 - **Degraded mode:** health distinguishes provider outages from API unavailability.
@@ -285,23 +309,24 @@ See [SECURITY.md](SECURITY.md) for reporting and deployment guidance.
 ## Testing
 
 ```powershell
+$env:REPOMESH_TEST_POSTGRES_DSN = "postgresql://repomesh:repomesh@127.0.0.1:5432/repomesh"
 .\scripts\test.ps1
 ```
 
-That command runs backend pytest, Ruff, mypy, frontend Vitest, TypeScript checking, and the Vite production build. CI runs the same quality gates on every push and pull request. Docker validation uses:
+That command runs backend pytest, Ruff, mypy, frontend Vitest, TypeScript checking, and the Vite production build. CI runs the quality gates against real PostgreSQL and a separate four-worker Docker Compose smoke with Qdrant. PostgreSQL-dependent tests explicitly skip if `REPOMESH_TEST_POSTGRES_DSN` is absent. Docker validation uses:
 
 ```powershell
 docker compose build api
-docker compose up -d --wait qdrant
+docker compose up -d --wait postgres qdrant
 docker compose ps
 ```
 
-There is no Alembic dependency: schema creation and FTS5 setup are versioned directly in [`src/repomesh/db.py`](src/repomesh/db.py).
+SQLite schema/FTS5 initialization remains in `src/repomesh/db.py`. PostgreSQL uses ordered SQL files under `src/repomesh/coordination/migrations`, applied atomically under a migration lock; `repomesh migrate` applies them explicitly.
 
 ## Known limitations
 
-- One compute node; no HA claims and no Qdrant cluster.
-- SQLite manifests/jobs and Qdrant vectors are node-local state.
+- Independent workers share one host/storage boundary; no arbitrary multi-host repository distribution, API HA, or Qdrant cluster.
+- SQLite manifests/FTS5 and Qdrant vectors remain local storage; PostgreSQL owns distributed coordination. External stores are not part of a PostgreSQL atomic transaction; see the partition caveat in the design.
 - One static node token; no rotation protocol, RBAC, or multi-tenancy.
 - No remote hostile-code sandboxing; repository access assumes a trusted operator.
 - Tree-sitter declaration coverage is intentionally focused; unsupported or unusual syntax uses line fallback.

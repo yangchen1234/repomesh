@@ -22,6 +22,7 @@ dependencies = [
   "pathspec>=0.12,<1",
   "prometheus-client>=0.22,<1",
   "structlog>=25.4,<26",
+  "psycopg[binary,pool]>=3.2,<4",
 ]
 
 [project.urls]

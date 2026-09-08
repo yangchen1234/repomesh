@@ -14,6 +14,19 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: repomesh
+          POSTGRES_PASSWORD: repomesh
+          POSTGRES_DB: repomesh_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U repomesh -d repomesh_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      REPOMESH_TEST_POSTGRES_DSN: postgresql://repomesh:repomesh@127.0.0.1:5432/repomesh_test
 
     steps:
       - uses: actions/checkout@v4
@@ -52,3 +65,31 @@ jobs:
       - name: TypeScript and production build
         working-directory: dashboard
         run: npm run build
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      REPOMESH_JOB_LEASE_SECONDS: "5"
+      REPOMESH_JOB_HEARTBEAT_SECONDS: "1"
+      REPOMESH_JOB_POLL_SECONDS: "0.1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Start PostgreSQL, Qdrant, API and four independent workers
+        run: docker compose up -d --build --scale worker=4 --wait
+      - name: Verify all four workers, indexing, retrieval and abrupt crash recovery
+        run: python scripts/test-distributed-compose.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compose-distributed-evidence
+          path: benchmarks/compose_results.json
+      - name: Container logs
+        if: failure()
+        run: docker compose logs --no-color --tail 100
+      - name: Stop containers
+        if: always()
+        run: docker compose down -v

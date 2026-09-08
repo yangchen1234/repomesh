@@ -5,7 +5,6 @@ import ipaddress
 
 import uvicorn
 
-from repomesh.api import create_app
 from repomesh.config import Settings
 from repomesh.models import SearchMode
 from repomesh.repositories import register_repository, validate_repository_path
@@ -24,6 +23,10 @@ def parser() -> argparse.ArgumentParser:
             "to host loopback only"
         ),
     )
+    worker = commands.add_parser("worker", help="run an independent indexing worker")
+    worker.add_argument("--worker-id")
+    commands.add_parser("migrate", help="apply PostgreSQL coordination migrations")
+    commands.add_parser("import-legacy-jobs", help="import historical SQLite jobs after stopping the old API")
     register = commands.add_parser("register")
     register.add_argument("path")
     index = commands.add_parser("index")
@@ -63,18 +66,33 @@ def main() -> None:
     args = parser().parse_args()
     settings = Settings()
     if args.command == "serve":
+        from repomesh.api import create_app
+
         validate_serve_bind(settings, args.container_loopback_publish)
         uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
         return
     services = Services.create(settings)
     try:
-        if args.command == "register":
+        if args.command == "worker":
+            from repomesh.services import configure_logging
+            from repomesh.worker import Worker
+
+            configure_logging()
+            Worker(services, args.worker_id).run()
+        elif args.command == "migrate":
+            print("PostgreSQL coordination migrations applied")
+        elif args.command == "import-legacy-jobs":
+            count = services.coordination.import_legacy_jobs(services.database.fetchall("SELECT * FROM jobs"))
+            print(f"Imported {count} legacy jobs")
+        elif args.command == "register":
             path = validate_repository_path(args.path, settings.resolved_roots())
             repository = register_repository(path)
             if not services.database.repository(repository.id):
                 services.database.add_repository(repository)
             print(repository.model_dump_json(indent=2))
         elif args.command == "index":
+            if not services.database.repository(args.repository_id):
+                raise SystemExit("repository not found")
             job = services.jobs.submit(args.repository_id, args.mode, None)
             print(services.jobs.wait(job.id).model_dump_json(indent=2))
         elif args.command == "search":
