@@ -25,10 +25,12 @@ def parser() -> argparse.ArgumentParser:
     )
     worker = commands.add_parser("worker", help="run an independent indexing worker")
     worker.add_argument("--worker-id")
+    commands.add_parser("watch", help="automatically enqueue incremental jobs for changed repositories")
     commands.add_parser("migrate", help="apply PostgreSQL coordination migrations")
     commands.add_parser("import-legacy-jobs", help="import historical SQLite jobs after stopping the old API")
     register = commands.add_parser("register")
     register.add_argument("path")
+    register.add_argument("--no-auto-index", action="store_true")
     index = commands.add_parser("index")
     index.add_argument("repository_id")
     index.add_argument("--mode", choices=["full", "incremental"], default="incremental")
@@ -79,6 +81,12 @@ def main() -> None:
 
             configure_logging()
             Worker(services, args.worker_id).run()
+        elif args.command == "watch":
+            from repomesh.services import configure_logging
+            from repomesh.watcher import RepositoryWatcher
+
+            configure_logging()
+            RepositoryWatcher(services).run()
         elif args.command == "migrate":
             print("PostgreSQL coordination migrations applied")
         elif args.command == "import-legacy-jobs":
@@ -89,6 +97,11 @@ def main() -> None:
             repository = register_repository(path)
             if not services.database.repository(repository.id):
                 services.database.add_repository(repository)
+            from repomesh.coordination.watches import WatchRepository
+
+            WatchRepository(services.coordination).ensure(
+                repository.id, False if args.no_auto_index else None
+            )
             print(repository.model_dump_json(indent=2))
         elif args.command == "index":
             if not services.database.repository(args.repository_id):

@@ -5,12 +5,12 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import httpx
 import psycopg
 import structlog
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +26,7 @@ from psycopg_pool import PoolTimeout
 from repomesh import __version__
 from repomesh.config import Settings
 from repomesh.coordination.metrics import CoordinationCollector
+from repomesh.coordination.watches import WatchRepository
 from repomesh.models import (
     AnswerRequest,
     AnswerResponse,
@@ -41,6 +42,7 @@ from repomesh.models import (
     SearchMode,
     SearchRequest,
     SearchResponse,
+    WatchRequest,
 )
 from repomesh.providers import ProviderUnavailable, QdrantVectorStore
 from repomesh.repositories import (
@@ -64,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     configure_logging()
     services = Services.create(settings)
+    watches = WatchRepository(services.coordination)
     coordination_metrics = CollectorRegistry()
     coordination_metrics.register(CoordinationCollector(services.coordination))
     started_at = time.monotonic()
@@ -219,8 +222,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             repository = register_repository(path, body.name)
             existing = services.database.repository(repository.id)
             if existing:
+                watches.ensure(existing.id, body.auto_index)
                 return existing
             services.database.add_repository(repository)
+            watches.ensure(repository.id, body.auto_index)
             return repository
         except RepositoryValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -253,6 +258,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "repository": repository.model_dump(),
             "latest_job": latest.model_dump() if latest else None,
         }
+
+    @app.get("/v1/watches")
+    def list_watches(_auth: None = Depends(require_token)) -> list[dict[str, Any]]:
+        return watches.list()
+
+    @app.put("/v1/repositories/{repository_id}/watch")
+    def update_watch(
+        repository_id: str, body: WatchRequest, _auth: None = Depends(require_token)
+    ) -> dict[str, Any]:
+        if not services.database.repository(repository_id):
+            raise HTTPException(status_code=404, detail="repository not found")
+        watches.set_enabled(repository_id, body.enabled)
+        return next(w for w in watches.list() if w["repository_id"] == repository_id)
 
     @app.post("/v1/search", response_model=SearchResponse)
     def search(body: SearchRequest, _auth: None = Depends(require_token)) -> SearchResponse:
@@ -332,6 +350,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return EmbedResponse(
             model=services.embedder.model, dimensions=len(vectors[0]), vectors=vectors
         )
+
+    @app.get("/v1/jobs")
+    def list_jobs(
+        repository_id: str | None = None,
+        job_status: Annotated[
+            Literal["active", "queued", "running", "retrying", "completed",
+                    "completed_with_errors", "failed", "cancelled"] | None,
+            Query(alias="status"),
+        ] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        _auth: None = Depends(require_token),
+    ) -> dict[str, Any]:
+        return services.coordination.list_jobs(repository_id, job_status, limit, offset)
+
+    @app.get("/v1/jobs/{job_id}/history")
+    def job_history(job_id: str, _auth: None = Depends(require_token)) -> dict[str, Any]:
+        history = services.coordination.job_history(job_id)
+        if history is None:
+            raise HTTPException(status_code=404, detail="job not found")
+        return history
+
+    @app.post("/v1/jobs/{job_id}/retry", response_model=Job, status_code=202)
+    def retry_job(job_id: str, _auth: None = Depends(require_token)) -> Job:
+        try:
+            return services.coordination.resubmit_job(job_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/v1/jobs/{job_id}", response_model=Job)
     def get_job(job_id: str, _auth: None = Depends(require_token)) -> Job:

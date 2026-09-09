@@ -24,6 +24,7 @@ RepoMesh combines code-aware Tree-sitter chunking, SQLite FTS5, Qdrant, Ollama, 
 - **Three retrieval modes:** SQLite FTS5 lexical search, Qdrant dense search, and Reciprocal Rank Fusion (RRF) hybrid search.
 - **Cited local answers:** Ollama generation constrained to retrieved evidence, with structured citations and `[path:start-end]` labels.
 - **Distributed jobs:** PostgreSQL atomic claims, independent workers, lease generations, fenced updates, durable exponential retries, repository exclusion, cross-process cancellation and crash recovery.
+- **Automatic updates and operations:** an independent watcher coalesces local edits into incremental jobs; the dashboard shows workers, queue/history, failure details, cancellation, resubmission, and per-repository pause controls. See [the guide](docs/WATCH_OPERATIONS.md).
 - **Control-plane API:** FastAPI, Pydantic, OpenAPI, optional local/required remote token authentication, Prometheus metrics, and JSON logs.
 - **Usable dashboard:** node health, repositories, indexing progress, all retrieval modes, cited answers, latency, and degraded-state visibility.
 - **Reproducible evaluation:** a committed 25-query fixture corpus and raw benchmark sessions.
@@ -197,7 +198,7 @@ The `Makefile` provides `setup`, `deps`, `models`, `api`, `dashboard`, `test`, `
 docker compose up --build --scale worker=4
 ```
 
-Compose runs PostgreSQL, Qdrant, the API, and four independently identified worker
+Compose runs PostgreSQL, Qdrant, the API, an automatic-update watcher, and four independently identified worker
 containers. They share a read-only repository mount and one local SQLite data
 volume. Register `/repositories/repomesh` through the API. Set
 `REPOMESH_REPOSITORIES_DIR` to change the host source mount; all replicas must see
@@ -208,6 +209,11 @@ machines can read local Windows paths.
 to 300 seconds, then returns the current job if still unfinished. No API execution
 fallback exists. Use `wait=false` plus polling for long jobs or when behind an HTTP
 proxy with shorter timeouts.
+
+For native automatic updates, also run `repomesh watch` (Windows:
+`.\scripts\start-watcher.ps1`). The dashboard provides pause/resume controls,
+job history, worker status, cancellation, and resubmission. See the
+[automatic update and operations guide](docs/WATCH_OPERATIONS.md).
 
 To upgrade existing data: stop the old API, set `REPOMESH_POSTGRES_DSN`, run
 `repomesh import-legacy-jobs`, then start the new API and workers. Import preserves

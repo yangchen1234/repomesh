@@ -21,6 +21,31 @@ h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: .12em; color: #
 .health { grid-column: span 4; }
 .repositories { grid-column: span 8; }
 .search { grid-column: span 12; }
+.operations { grid-column: span 12; }
+.section-heading, .filters, .pagination, .actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.section-heading { justify-content: space-between; }
+.pagination { justify-content: flex-end; margin-top: 16px; }
+.filters { margin-bottom: 16px; }
+.job-row, .worker-row { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; border-top: 1px solid #20333b; overflow-wrap: anywhere; }
+.job-row > div:first-child, .worker-row > div:first-child { min-width: 0; flex: 1; }
+.actions { align-content: center; flex-shrink: 0; }
+.status { display: inline-block; font-size: .8rem; border-radius: 6px; background: #20333b; padding: 4px 8px; margin-left: 8px; }
+.status.completed, .status.idle { color: #69e3ae; }
+.status.running, .status.busy { color: #8dbaff; }
+.status.failed, .status.offline, .error-text { color: #ffb5bc; }
+.status.retrying, .status.completed_with_errors, .status.cancelled { color: #ffbf69; }
+.watch-info { grid-column: 1 / -1; border-left: 2px solid #355760; padding-left: 12px; }
+.watch-info button { margin-right: 8px; margin-bottom: 5px; }
+.job-detail { background: #081216; padding: 20px; border: 1px solid #355760; border-radius: 12px; margin-top: 20px; overflow-wrap: anywhere; }
+.attempt { border-top: 1px solid #20333b; padding: 12px 0; }
+.error-text { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.empty { padding: 24px 0; color: #8fa9b5; }
+.selected { border-left: 3px solid #58d6a2; padding-left: 12px; }
+progress { accent-color: #58d6a2; height: 8px; max-width: 100%; }
+#operations-notice:not(:empty) { color: #ffbf69; padding: 12px 0; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #8ff0c7; outline-offset: 3px; }
+.repo > div { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .shell { padding: 16px; } .job-row, .worker-row { flex-direction: column; } .filters select { max-width: 100%; } .actions { align-self: flex-start; } }
 .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .stat { background: #0a1519; border-radius: 10px; padding: 11px; }
 .stat span { display: block; color: #7e98a3; font-size: .76rem; margin-bottom: 5px; }

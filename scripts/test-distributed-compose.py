@@ -15,11 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = "http://127.0.0.1:8787"
 
 
-def request(path: str, body: dict[str, Any] | None = None) -> Any:
+def request(path: str, body: dict[str, Any] | None = None, method: str | None = None) -> Any:
     req = urllib.request.Request(
         BASE + path,
         data=json.dumps(body).encode() if body is not None else None,
         headers={"Content-Type": "application/json"},
+        method=method,
     )
     with urllib.request.urlopen(req, timeout=20) as response:
         return json.load(response)
@@ -66,7 +67,7 @@ def main() -> None:
             subprocess.run(["git", "init", "-q", str(path)], check=True)
             repo = request(
                 "/v1/repositories",
-                {"path": f"/repositories/repomesh/work/compose-corpus/repo-{index}"},
+                {"path": f"/repositories/repomesh/work/compose-corpus/repo-{index}", "auto_index": False},
             )
             ids.append(repo["id"])
         started = time.perf_counter()
@@ -127,6 +128,40 @@ def main() -> None:
                 "after": recovered,
             },
         )
+        # The watcher sees host edits through the same read-only bind mount as workers.
+        auto_root = ROOT / "work" / "compose-corpus" / "auto-updates"
+        auto_root.mkdir(parents=True, exist_ok=True)
+        (auto_root / "app.py").write_text("def automatic_first(): return 1\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(auto_root)], check=True)
+        auto_repo = request("/v1/repositories", {
+            "path": "/repositories/repomesh/work/compose-corpus/auto-updates", "auto_index": True,
+        })
+
+        def auto_job(after: str | None = None) -> Any:
+            state = next(w for w in request("/v1/watches") if w["repository_id"] == auto_repo["id"])
+            job_id = state["last_job_id"]
+            return terminal(job_id) if job_id and job_id != after else None
+
+        initial_auto = wait(auto_job)
+        assert initial_auto["status"] == "completed", initial_auto
+        subprocess.run(["docker", "compose", "restart", "watcher"], check=True, capture_output=True)
+        (auto_root / "app.py").unlink()
+        (auto_root / "replacement.py").write_text("def automatic_replacement(): return 2\n", encoding="utf-8")
+        updated_auto = wait(lambda: auto_job(initial_auto["id"]))
+        assert updated_auto["status"] == "completed" and updated_auto["deleted_files"] == 1, updated_auto
+        assert request("/v1/search", {
+            "repository_id": auto_repo["id"], "query": "automatic_replacement", "mode": "hybrid",
+        })["results"][0]["file_path"] == "replacement.py"
+        history = request(f"/v1/jobs/{updated_auto['id']}/history")
+        assert history["attempts"] and history["file_error_total"] == 0, history
+        paused = request(f"/v1/repositories/{auto_repo['id']}/watch", {"enabled": False}, "PUT")
+        assert paused["state"] == "paused", paused
+        page = request(f"/v1/jobs?repository_id={auto_repo['id']}&status=completed&limit=1")
+        assert page["total"] == 2 and len(page["jobs"]) == 1, page
+        evidence["automatic_updates"] = {
+            "initial": initial_auto, "after_watcher_restart_and_file_changes": updated_auto,
+            "history": history, "paused": paused["state"], "completed_jobs": page["total"],
+        }
         with urllib.request.urlopen(BASE + "/metrics", timeout=10) as response:
             evidence["metrics"] = response.read().decode()
     except Exception as exc:

@@ -20,6 +20,11 @@ class SearchMode(StrEnum):
 class RegisterRepositoryRequest(BaseModel):
     path: str
     name: str | None = None
+    auto_index: bool | None = None
+
+
+class WatchRequest(BaseModel):
+    enabled: bool
 
 
 class Repository(BaseModel):
@@ -45,6 +50,8 @@ class Job(BaseModel):
     id: str
     repository_id: str
     kind: str
+    trigger: str = "manual"
+    parent_job_id: str | None = None
     mode: str
     status: str
     progress_done: int

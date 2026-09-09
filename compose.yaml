@@ -11,6 +11,10 @@ x-runtime: &runtime
     REPOMESH_JOB_LEASE_SECONDS: ${REPOMESH_JOB_LEASE_SECONDS:-30}
     REPOMESH_JOB_HEARTBEAT_SECONDS: ${REPOMESH_JOB_HEARTBEAT_SECONDS:-10}
     REPOMESH_JOB_POLL_SECONDS: ${REPOMESH_JOB_POLL_SECONDS:-1}
+    REPOMESH_WATCH_POLL_SECONDS: ${REPOMESH_WATCH_POLL_SECONDS:-5}
+    REPOMESH_WATCH_DEBOUNCE_SECONDS: ${REPOMESH_WATCH_DEBOUNCE_SECONDS:-2}
+    REPOMESH_WATCH_MAX_WAIT_SECONDS: ${REPOMESH_WATCH_MAX_WAIT_SECONDS:-30}
+    REPOMESH_WATCH_DEFAULT_ENABLED: ${REPOMESH_WATCH_DEFAULT_ENABLED:-true}
     REPOMESH_EMBEDDING_PROVIDER: ${REPOMESH_EMBEDDING_PROVIDER:-fake}
     REPOMESH_EMBEDDING_MODEL: ${REPOMESH_EMBEDDING_MODEL:-nomic-embed-text}
     REPOMESH_EMBEDDING_DIMENSIONS: ${REPOMESH_EMBEDDING_DIMENSIONS:-384}
@@ -79,6 +83,11 @@ services:
     command: ["repomesh", "worker"]
     # No fixed identity or published port: each replica gets hostname:pid:uuid.
     stop_grace_period: 150s
+
+  watcher:
+    <<: *runtime
+    command: ["repomesh", "watch"]
+    stop_grace_period: 45s
 
   ollama:
     image: ollama/ollama:0.32.15

@@ -121,6 +121,76 @@ class CoordinationRepository:
             ).fetchone()
             return Job.model_validate(serialize(row)) if row else None
 
+    def list_jobs(
+        self, repository_id: str | None = None, status: str | None = None,
+        limit: int = 25, offset: int = 0,
+    ) -> dict[str, Any]:
+        clauses = []
+        values: list[Any] = []
+        if repository_id:
+            clauses.append("repository_id=%s")
+            values.append(repository_id)
+        if status == "active":
+            clauses.append("status IN ('queued','running','retrying')")
+        elif status:
+            clauses.append("status=%s")
+            values.append(status)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self.pool.connection() as conn:
+            # The count and page refer to one snapshot even while workers finish jobs.
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            total = conn.execute("SELECT count(*) AS n FROM jobs" + where, values).fetchone()
+            rows = conn.execute(
+                "SELECT * FROM jobs" + where + " ORDER BY created_at DESC,id DESC LIMIT %s OFFSET %s",
+                [*values, limit, offset],
+            ).fetchall()
+        return {"jobs": [serialize(row) for row in rows], "total": total["n"] if total else 0,
+                "limit": limit, "offset": offset}
+
+    def job_history(self, job_id: str) -> dict[str, Any] | None:
+        with self.pool.connection() as conn:
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            if not conn.execute("SELECT 1 FROM jobs WHERE id=%s", (job_id,)).fetchone():
+                return None
+            attempts = conn.execute(
+                "SELECT * FROM job_attempts WHERE job_id=%s ORDER BY lease_generation", (job_id,)
+            ).fetchall()
+            errors = conn.execute(
+                """SELECT * FROM job_file_errors WHERE job_id=%s
+                ORDER BY created_at DESC,file_path LIMIT 200""", (job_id,)
+            ).fetchall()
+            total = conn.execute(
+                "SELECT count(*) AS n FROM job_file_errors WHERE job_id=%s", (job_id,)
+            ).fetchone()
+        return {"attempts": [serialize(row) for row in attempts],
+                "file_errors": [serialize(row) for row in errors],
+                "file_error_total": total["n"] if total else 0}
+
+    def resubmit_job(self, job_id: str) -> Job:
+        """A repeated click returns the same successor; history and attempt budgets stay intact."""
+        with self.pool.connection() as conn:
+            old = conn.execute("SELECT * FROM jobs WHERE id=%s FOR UPDATE", (job_id,)).fetchone()
+            if old is None:
+                raise LookupError("job not found")
+            if old["status"] not in TERMINAL:
+                raise ValueError("only finished jobs can be resubmitted")
+            row = conn.execute(
+                """INSERT INTO jobs(id,repository_id,mode,priority,max_attempts,trigger,parent_job_id)
+                VALUES(%s,%s,'incremental',%s,%s,'retry',%s)
+                ON CONFLICT(parent_job_id) DO NOTHING RETURNING *""",
+                (str(uuid.uuid4()), old["repository_id"], old["priority"],
+                 self.settings.job_max_retries, job_id),
+            ).fetchone()
+            if row is None:
+                row = conn.execute("SELECT * FROM jobs WHERE parent_job_id=%s", (job_id,)).fetchone()
+            assert row is not None
+            # A manual retry of the latest automatic job becomes its tracked successor.
+            conn.execute(
+                "UPDATE repository_watches SET last_job_id=%s WHERE last_job_id=%s",
+                (row["id"], job_id),
+            )
+            return Job.model_validate(serialize(row))
+
     def register_worker(self, worker_id: str, hostname: str, pid: int, version: str) -> str:
         session = str(uuid.uuid4())
         with self.pool.connection() as conn:
@@ -378,9 +448,9 @@ class CoordinationRepository:
                 (job.repository_id, job.id),
             )
             conn.execute(
-                """UPDATE job_attempts SET ended_at=clock_timestamp(),outcome=%s
+                """UPDATE job_attempts SET ended_at=clock_timestamp(),outcome=%s,error=%s
                 WHERE job_id=%s AND lease_generation=%s""",
-                (row["status"], job.id, job.lease_generation),
+                (row["status"], error, job.id, job.lease_generation),
             )
             conn.execute(
                 """UPDATE workers SET completed_jobs=completed_jobs+%s,failed_jobs=failed_jobs+%s,

@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     job_retry_base_seconds: float = Field(default=1, gt=0)
     job_retry_max_seconds: float = Field(default=60, gt=0)
     worker_offline_seconds: float = Field(default=60, gt=0)
+    watch_poll_seconds: float = Field(default=5, gt=0)
+    watch_debounce_seconds: float = Field(default=2, ge=0)
+    watch_max_wait_seconds: float = Field(default=30, gt=0)
+    watch_default_enabled: bool = True
     rrf_k: int = 60
     context_char_budget: int = 16_000
     node_id: str = Field(default_factory=socket.gethostname)
@@ -55,6 +59,8 @@ class Settings(BaseSettings):
             raise ValueError("job_heartbeat_seconds must be less than job_lease_seconds")
         if self.worker_offline_seconds <= self.job_heartbeat_seconds:
             raise ValueError("worker_offline_seconds must exceed job_heartbeat_seconds")
+        if self.watch_max_wait_seconds < self.watch_debounce_seconds:
+            raise ValueError("watch_max_wait_seconds must be at least watch_debounce_seconds")
         return self
 
     @field_validator("repository_roots", mode="before")
