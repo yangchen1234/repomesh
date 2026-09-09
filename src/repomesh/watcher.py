@@ -52,30 +52,38 @@ class RepositoryWatcher:
             try:
                 if not acquired or not acquired["acquired"]:
                     return 0
-                for repository in self.services.database.repositories():
-                    self.watches.ensure(repository.id)
+                repositories = self.services.database.fetchall(
+                    "SELECT id,root,commit_sha FROM repositories ORDER BY created_at"
+                )
+                for repository in repositories:
+                    self.watches.ensure(repository["id"])
                 enabled = {w["repository_id"] for w in self.watches.list() if w["enabled"]}
-                for repository in self.services.database.repositories():
+                for repository in repositories:
                     if self.stop.is_set():
                         break
-                    if repository.id not in enabled:
+                    repository_id = repository["id"]
+                    if repository_id not in enabled:
                         continue
                     try:
                         root = validate_repository_path(
-                            repository.root, self.services.settings.resolved_roots()
+                            repository["root"], self.services.settings.resolved_roots()
                         )
                         fingerprint = repository_fingerprint(root, self.services.settings.max_file_bytes)
+                        indexed = hashlib.sha256(repository["commit_sha"].encode())
+                        for path, item in sorted(self.services.database.file_manifest(repository_id).items()):
+                            indexed.update(b"\0" + path.encode() + b"\0")
+                            indexed.update(item["sha256"].encode())
                         # Verify the elected session survived the scan before persisting it.
                         conn.execute("SELECT 1")
-                        job = self.watches.observe(repository.id, fingerprint)
+                        job = self.watches.observe(repository_id, fingerprint, indexed.hexdigest())
                         if job:
                             count += 1
-                            logger.info("watch_job_submitted", repository_id=repository.id, job_id=job.id)
+                            logger.info("watch_job_submitted", repository_id=repository_id, job_id=job.id)
                     except (psycopg.Error, PoolTimeout):
                         raise
                     except Exception as exc:
-                        self.watches.record_error(repository.id, str(exc))
-                        logger.warning("watch_scan_failed", repository_id=repository.id, error=str(exc))
+                        self.watches.record_error(repository_id, str(exc))
+                        logger.warning("watch_scan_failed", repository_id=repository_id, error=str(exc))
             finally:
                 if not conn.closed:
                     if acquired and acquired["acquired"]:

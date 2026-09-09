@@ -100,6 +100,26 @@ def test_watch_debounce_persists_across_restart_and_max_wait(watched):
     assert watch.observe(repo, "third")  # Continuous edits cannot postpone forever.
 
 
+def test_edit_and_revert_between_scans_repairs_the_index(watched):
+    services, repo, root = watched
+    watcher = RepositoryWatcher(services)
+    worker = Worker(services)
+    path = root / "app.py"
+    original = path.read_bytes()
+    try:
+        assert watcher.run_once() == 1
+        path.write_text("def transient_edit(): return 9\n")
+        assert worker.run_once()
+        path.write_bytes(original)
+        # The observed source matches the submitted snapshot, but the worker indexed the edit.
+        assert watcher.run_once() == 1
+        assert worker.run_once()
+        assert watcher.run_once() == 0
+        assert "transient_edit" not in " ".join(chunk["content"] for chunk in services.database.chunks(repo))
+    finally:
+        worker.close()
+
+
 def test_watch_atomic_observation_and_failure_does_not_loop(watched):
     services, repo, _ = watched
     watch = WatchRepository(services.coordination)
@@ -218,7 +238,7 @@ def test_separate_watcher_and_worker_processes_update_live_files(watched):
                 [sys.executable, "-m", "repomesh.cli", command], env=env,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             ))
-        wait_for(lambda: bool(services.database.file_manifest(repo)))
+        wait_for(lambda: services.coordination.list_jobs(repo, "completed")["total"] == 1)
         (root / "new.py").write_text("def automatic_feature(): return 'searchable'\n")
         (root / "util.py").unlink()
         wait_for(lambda: "new.py" in services.database.file_manifest(repo)

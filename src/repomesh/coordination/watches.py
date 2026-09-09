@@ -78,13 +78,28 @@ class WatchRepository:
                 WHERE repository_id=%s AND enabled""", (error[:2000], repository_id),
             )
 
-    def observe(self, repository_id: str, fingerprint: str) -> Job | None:
+    def observe(
+        self, repository_id: str, fingerprint: str, indexed_fingerprint: str | None = None
+    ) -> Job | None:
         with self.coordination.pool.connection() as conn:
             row = conn.execute(
                 "SELECT * FROM repository_watches WHERE repository_id=%s FOR UPDATE", (repository_id,)
             ).fetchone()
             if not row or not row["enabled"]:
                 return None
+            # Files can change and revert entirely between scans while a worker reads them.
+            # After successful work, compare the persisted manifest as well as observations.
+            # Failed/cancelled work keeps its bounded retry policy and needs manual attention.
+            if indexed_fingerprint is not None and indexed_fingerprint != fingerprint:
+                conn.execute(
+                    """UPDATE repository_watches SET submitted_fingerprint=NULL
+                    WHERE repository_id=%s AND submitted_fingerprint=%s
+                    AND EXISTS(SELECT 1 FROM jobs WHERE id=repository_watches.last_job_id
+                        AND status='completed')
+                    AND NOT EXISTS(SELECT 1 FROM jobs WHERE repository_id=%s
+                        AND status IN ('queued','running','retrying'))""",
+                    (repository_id, fingerprint, repository_id),
+                )
             conn.execute(
                 """UPDATE repository_watches SET
                 stable_since=CASE WHEN observed_fingerprint IS DISTINCT FROM %s

@@ -50,6 +50,10 @@ automatic updates after fixing the cause. A new content change can trigger anoth
 Pausing stops future automatic submissions; already queued/running work is cancelled
 separately from the jobs panel.
 
+After successful automatic work, the watcher also reconciles source hashes against
+the persisted index manifest. This repairs an edit that a worker read and that was
+reverted before the next scan, even when the observed source fingerprint is unchanged.
+
 ## Dashboard
 
 - Repositories show automatic update state, last check, and the last successfully
