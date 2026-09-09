@@ -179,6 +179,12 @@ def test_operations_history_filters_auth_and_idempotent_retry(watched):
     store.fail_job(owned, "embedding offline")
     services.settings.api_token = "test-operations-token"
     with TestClient(create_app(services.settings)) as client:
+        preflight = client.options(f"/v1/repositories/{repo}/watch", headers={
+            "Origin": "http://127.0.0.1:5173", "Access-Control-Request-Method": "PUT",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        })
+        assert preflight.status_code == 200
+        assert preflight.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
         for path in ("/v1/jobs", "/v1/watches", "/v1/workers", f"/v1/jobs/{failed.id}/history"):
             assert client.get(path).status_code == 401
         assert client.post(f"/v1/jobs/{failed.id}/retry").status_code == 401
