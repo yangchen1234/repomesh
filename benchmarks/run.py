@@ -8,6 +8,7 @@ import platform
 import subprocess
 import tempfile
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import Any
 
 import psutil
 
+from benchmarks.harness import WorkerGroup, drop_benchmark_schema
 from repomesh.config import Settings
 from repomesh.models import SearchMode
 from repomesh.providers import QdrantVectorStore
@@ -80,6 +82,7 @@ def main() -> None:
         clone = temp_root / "corpus"
         subprocess.run(["git", "clone", "--quiet", "--local", str(source), str(clone)], check=True)
         settings = Settings(
+            postgres_schema="bench_" + uuid.uuid4().hex,
             data_dir=temp_root / "data",
             repository_roots=[temp_root],
             embedding_provider=args.embedding_provider,
@@ -89,7 +92,9 @@ def main() -> None:
             qdrant_collection=f"repomesh_benchmark_{os.getpid()}",
         )
         services = Services.create(settings)
+        workers = WorkerGroup(services)
         try:
+            workers.__enter__()
             repository = register_repository(clone, "RepoMesh benchmark clone")
             services.database.add_repository(repository)
             cpu_before = psutil.cpu_percent(interval=0.2)
@@ -195,7 +200,9 @@ def main() -> None:
                     services.vector_store.client.delete_collection(services.vector_store.collection)
                 except Exception:
                     pass
+            workers.close()
             services.close()
+            drop_benchmark_schema(settings)
 
 
 if __name__ == "__main__":

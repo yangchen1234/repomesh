@@ -35,3 +35,6 @@ models/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local benchmark/test scratch data
+work/

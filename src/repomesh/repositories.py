@@ -76,7 +76,15 @@ def validate_repository_path(path_text: str, allow_roots: list[Path]) -> Path:
         raise RepositoryValidationError("repository path is outside REPOMESH_REPOSITORY_ROOTS")
     try:
         output = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+            [
+                "git",
+                "-c",
+                f"safe.directory={path.as_posix()}",
+                "-C",
+                str(path),
+                "rev-parse",
+                "--show-toplevel",
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -92,7 +100,15 @@ def validate_repository_path(path_text: str, allow_roots: list[Path]) -> Path:
 def current_commit(path: Path) -> str:
     try:
         return subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            [
+                "git",
+                "-c",
+                f"safe.directory={path.as_posix()}",
+                "-C",
+                str(path),
+                "rev-parse",
+                "HEAD",
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -121,6 +137,8 @@ def discover_files(path: Path, max_bytes: int) -> list[Path]:
         output = subprocess.run(
             [
                 "git",
+                "-c",
+                f"safe.directory={path.as_posix()}",
                 "-C",
                 str(path),
                 "ls-files",

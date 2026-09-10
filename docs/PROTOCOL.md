@@ -15,7 +15,7 @@ Errors use `{"detail":"..."}`. Provider failures return `503` and `degraded: tru
 
 ### `GET /v1/health`
 
-Returns node ID, application version, uptime seconds, Qdrant/Ollama status, configured model names, active/queued job counts, and `degraded_mode`. This is the Mac's readiness probe.
+Returns node ID, application version, uptime seconds, PostgreSQL/Qdrant/Ollama status and active worker count, configured model names, active/queued job counts, and `degraded_mode`. This is the Mac's readiness probe.
 
 ### `GET /v1/capabilities`
 
@@ -39,7 +39,7 @@ The path must be an allowlisted Git root. Re-registering the same normalized roo
 {"mode":"incremental","idempotency_key":"mac-run-2026-08-25-001","wait":false}
 ```
 
-`mode` is `full` or `incremental`. Both are duplicate-safe; full reprocesses every current file while incremental processes hash changes only. `wait=true` is convenient for scripts, while the Mac should normally poll the returned job.
+`mode` is `full` or `incremental`. Both are duplicate-safe; full reprocesses every current file while incremental processes hash changes only. `wait=true` polls PostgreSQL for up to 300 seconds and returns the current state on timeout. It never executes indexing in the API; independent workers must be running. Clients should normally use `wait=false` and poll. Optional `priority` ranges from -100 to 100 (default 0).
 
 ### `GET /v1/repositories/{id}/status`
 
@@ -47,11 +47,15 @@ Returns `repository` and `latest_job` objects.
 
 ### `GET /v1/jobs/{job_id}`
 
-Job fields include `status`, progress total/done, indexed files/chunks, deleted/skipped/error counts, attempt, heartbeat/lease timestamps, cancellation flag, and terminal error. Terminal states are `completed`, `completed_with_errors`, `failed`, and `cancelled`.
+Job fields include `status`, progress total/done, indexed files/chunks, deleted/skipped/error counts, attempt/max_attempts, worker_id, lease_generation, priority, available/started/completed timestamps, heartbeat/lease timestamps, cancellation flag, and terminal error. Terminal states are `completed`, `completed_with_errors`, `failed`, and `cancelled`.
 
 ### `POST /v1/jobs/{job_id}/cancel`
 
-Persists cancellation. An active indexer observes it between files. Repeated cancellation is safe.
+Persists cancellation. Independent workers observe it through heartbeat and guarded storage checkpoints. Queued/retrying jobs cancel immediately. Repeated cancellation is safe.
+
+### `GET /v1/workers`
+
+Lists worker_id, hostname, pid, version, status (`idle`, `busy`, `stopped`, or derived `offline`), started_at, last_seen_at, current_job_id, completed_jobs and failed_jobs. Requires the configured API token.
 
 ### `POST /v1/search`
 

@@ -9,7 +9,7 @@
 - Node.js LTS for Dashboard development only;
 - Ollama for real local embeddings/generation.
 
-The application itself runs natively; Qdrant runs in Docker Desktop. WSL is optional.
+The application itself runs natively; PostgreSQL and Qdrant run in Docker Desktop (native PostgreSQL is also supported). WSL is optional.
 
 ## Install and configure
 
@@ -50,16 +50,22 @@ Foreground API and built Dashboard:
 .\scripts\start-api.ps1
 ```
 
-Dashboard development server (optional, second terminal):
+Independent worker (required, second terminal):
+
+```powershell
+.\scripts\start-worker.ps1
+```
+
+Dashboard development server (optional, another terminal):
 
 ```powershell
 .\scripts\start-dashboard.ps1
 ```
 
-Dockerized API plus Qdrant:
+Dockerized API, PostgreSQL, Qdrant and four workers:
 
 ```powershell
-docker compose up -d --build --wait qdrant api
+docker compose up -d --build --scale worker=4 --wait
 ```
 
 All published ports remain bound to loopback. The container mounts this project read-only as `/repositories/repomesh`; change volumes and allowlist together for other container-visible repositories.
@@ -79,11 +85,12 @@ docker compose ps
 
 ```bash
 bash scripts/setup.sh
-docker compose up -d --wait qdrant
+docker compose up -d --wait postgres qdrant
 ollama pull nomic-embed-text
 ollama pull qwen2.5-coder:1.5b
 REPOMESH_REPOSITORY_ROOTS='["/home/me/source"]' .venv/bin/repomesh serve
-bash scripts/test.sh
+# In another terminal: .venv/bin/repomesh worker
+REPOMESH_TEST_POSTGRES_DSN="$REPOMESH_POSTGRES_DSN" bash scripts/test.sh
 ```
 
 ## Private network binding
@@ -92,9 +99,11 @@ Leave `REPOMESH_HOST=127.0.0.1` for standalone use. For Mac access, set `REPOMES
 
 ## Troubleshooting
 
-- `degraded_mode=true`: inspect `ollama_status` and `qdrant_status`; lexical search should still work for an existing index.
+- `degraded_mode=true`: inspect `postgres_status`, `ollama_status` and `qdrant_status`; lexical search should still work for an existing index.
 - Ollama model not found: rerun `scripts/models.ps1` and verify `ollama list`.
 - Qdrant unhealthy: run `docker compose logs qdrant` and confirm ports 6333/6334 are unused.
 - Repository rejected: register the exact Git top level and include its resolved parent/root in the allowlist.
-- Stale running job after a crash: restart the API; startup recovery changes it to queued and resumes incrementally.
+- Stale running job after a crash: keep at least one independent worker running; it reclaims after lease expiry and resumes incrementally.
 - Dashboard unavailable at `/`: run the production build in `dashboard` or rebuild the Docker image.
+
+Set `REPOMESH_POSTGRES_DSN` identically for API/workers. For tests set `REPOMESH_TEST_POSTGRES_DSN`; CI uses real PostgreSQL and temporary schemas. Before upgrading old jobs, stop the old API and run `repomesh import-legacy-jobs`.

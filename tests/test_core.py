@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,10 +9,7 @@ from fastapi.testclient import TestClient
 from repomesh.api import create_app
 from repomesh.chunking import CodeChunker
 from repomesh.config import Settings
-from repomesh.db import Database
-from repomesh.indexing import IndexStats
-from repomesh.jobs import JobManager
-from repomesh.models import Job, SearchMode, utc_now
+from repomesh.models import SearchMode
 from repomesh.repositories import (
     RepositoryValidationError,
     discover_files,
@@ -22,6 +18,18 @@ from repomesh.repositories import (
 )
 from repomesh.retrieval import reciprocal_rank_fusion
 from repomesh.services import Services
+from repomesh.worker import Worker
+
+pytestmark = pytest.mark.usefixtures("postgres")
+
+
+def run_job(services: Services, job_id: str):
+    worker = Worker(services)
+    try:
+        assert worker.run_once()
+        return services.jobs.wait(job_id, timeout=5)
+    finally:
+        worker.close()
 
 
 def settings_for(tmp_path: Path, root: Path, **overrides: Any) -> Settings:
@@ -43,7 +51,7 @@ def indexed_services(tmp_path: Path, root: Path) -> tuple[Services, str]:
     repository = register_repository(root)
     services.database.add_repository(repository)
     job = services.jobs.submit(repository.id, "full", "initial")
-    completed = services.jobs.wait(job.id)
+    completed = run_job(services, job.id)
     assert completed.status == "completed"
     return services, repository.id
 
@@ -121,7 +129,7 @@ def test_incremental_add_modify_delete(tmp_path: Path, git_repository: Path) -> 
         (git_repository / "new.py").write_text("def added():\n    return 'new'\n", encoding="utf-8")
         (git_repository / "util.py").unlink()
         job = services.jobs.submit(repository_id, "incremental", "changes")
-        completed = services.jobs.wait(job.id)
+        completed = run_job(services, job.id)
         assert completed.indexed_files == 2
         assert completed.deleted_files == 1
         assert completed.skipped_files == 2
@@ -136,7 +144,7 @@ def test_repeated_index_has_no_duplicate_chunks(tmp_path: Path, git_repository: 
     try:
         before = len(services.database.chunks(repository_id))
         job = services.jobs.submit(repository_id, "full", "second-full")
-        services.jobs.wait(job.id)
+        run_job(services, job.id)
         chunks = services.database.chunks(repository_id)
         assert len(chunks) == before
         assert len({chunk["id"] for chunk in chunks}) == len(chunks)
@@ -154,7 +162,7 @@ def test_unsynced_vector_file_is_retried_incrementally(
             (repository_id,),
         )
         job = services.jobs.submit(repository_id, "incremental", "vector-resync")
-        completed = services.jobs.wait(job.id)
+        completed = run_job(services, job.id)
         assert completed.indexed_files == 1
         assert completed.skipped_files == 3
         assert services.database.file_manifest(repository_id)["util.py"]["vector_synced"] == 1
@@ -192,8 +200,12 @@ def test_rrf_fusion_adds_reciprocal_ranks() -> None:
     assert scores["a"] == pytest.approx(1 / 61 + 1 / 62)
 
 
-def test_answer_contains_only_real_citations(tmp_path: Path, git_repository: Path) -> None:
-    app = create_app(settings_for(tmp_path, git_repository.parent))
+def test_answer_contains_only_real_citations(
+    tmp_path: Path, git_repository: Path, launch_worker: Any
+) -> None:
+    settings = settings_for(tmp_path, git_repository.parent)
+    app = create_app(settings)
+    launch_worker(settings)
     with TestClient(app) as client:
         repository = client.post("/v1/repositories", json={"path": str(git_repository)}).json()
         indexed = client.post(
@@ -237,76 +249,42 @@ def test_job_idempotency_key_returns_same_job(tmp_path: Path, git_repository: Pa
         services.close()
 
 
-class SlowIndexer:
-    def index(self, repository_id: str, mode: str, progress: Any, cancelled: Any) -> IndexStats:
-        stats = IndexStats(total_files=100)
-        for index in range(100):
-            if cancelled():
-                from repomesh.indexing import IndexCancelled
-
-                raise IndexCancelled()
-            stats.skipped_files = index + 1
-            progress(stats, f"{index}.py", None)
-            time.sleep(0.005)
-        return stats
-
-
-def test_job_cancellation(tmp_path: Path, git_repository: Path) -> None:
-    database = Database(tmp_path / "cancel.sqlite3")
-    repository = register_repository(git_repository)
-    database.add_repository(repository)
-    manager = JobManager(database, cast(Any, SlowIndexer()), 30, 1)
-    try:
-        job = manager.submit(repository.id, "full", None)
-        time.sleep(0.03)
-        manager.cancel(job.id)
-        completed = manager.wait(job.id)
-        assert completed.status == "cancelled"
-    finally:
-        manager.shutdown()
-        database.close()
-
-
-class ImmediateIndexer:
-    def __init__(self) -> None:
-        self.modes: list[str] = []
-
-    def index(self, repository_id: str, mode: str, progress: Any, cancelled: Any) -> IndexStats:
-        self.modes.append(mode)
-        stats = IndexStats(total_files=1, skipped_files=1)
-        progress(stats, "already.py", None)
-        return stats
+def test_job_cancellation(tmp_path: Path, git_repository: Path, launch_worker: Any) -> None:
+    settings = settings_for(tmp_path, git_repository.parent)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        repo = client.post("/v1/repositories", json={"path": str(git_repository)}).json()
+        job = client.post(f"/v1/repositories/{repo['id']}/index", json={"mode": "full"}).json()
+        cancelled = client.post(f"/v1/jobs/{job['id']}/cancel").json()
+        assert cancelled["cancel_requested"] and cancelled["status"] == "cancelled"
+        launch_worker(settings)
+        assert app.state.services.jobs.wait(job["id"], timeout=2).status == "cancelled"
 
 
 def test_restart_recovery_resumes_running_job(tmp_path: Path, git_repository: Path) -> None:
-    database = Database(tmp_path / "recovery.sqlite3")
+    services = Services.create(settings_for(tmp_path, git_repository.parent))
     repository = register_repository(git_repository)
-    database.add_repository(repository)
-    now = utc_now()
-    job = Job(
-        id="recover-me",
-        repository_id=repository.id,
-        kind="index",
-        mode="full",
-        status="running",
-        progress_done=0,
-        progress_total=1,
-        attempt=1,
-        created_at=now,
-        updated_at=now,
-    )
-    database.add_job(job)
-    indexer = ImmediateIndexer()
-    manager = JobManager(database, cast(Any, indexer), 30, 2)
+    services.database.add_repository(repository)
+    store = services.coordination
+    session = store.register_worker("disappeared", "test", 1, "test")
+    submitted = services.jobs.submit(repository.id, "full", None)
+    old = store.claim_job("disappeared", session)
+    assert old is not None
+    # Successful manifested work must survive a crash and be skipped on reclaim.
+    services.indexer.index(repository.id, "full", lambda *_: None, lambda: False)
+    with store.pool.connection() as conn:
+        conn.execute(
+            "UPDATE jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=%s",
+            (submitted.id,),
+        )
     try:
-        assert manager.recover() == 1
-        recovered = manager.wait(job.id)
+        recovered = run_job(services, submitted.id)
         assert recovered.status == "completed"
-        assert recovered.mode == "full"
-        assert indexer.modes == ["incremental"]
+        assert recovered.mode == "full" and recovered.attempt == 2
+        assert recovered.skipped_files == 4 and recovered.indexed_files == 0
+        assert recovered.lease_generation == old.lease_generation + 1
     finally:
-        manager.shutdown()
-        database.close()
+        services.close()
 
 
 def test_ollama_offline_degrades_vector_but_not_lexical(

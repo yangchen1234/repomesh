@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from repomesh.models import Job, Repository, utc_now
+from repomesh.models import Repository, utc_now
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -106,6 +106,11 @@ CREATE TABLE IF NOT EXISTS query_logs (
     generation_ms REAL NOT NULL DEFAULT 0,
     chunk_ids_json TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pending_vector_deletions (
+    repository_id TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    PRIMARY KEY(repository_id,file_path)
 );
 """
 
@@ -234,11 +239,36 @@ class Database:
     def delete_file(self, repository_id: str, path: str) -> None:
         with self._lock, self._connection:
             self._connection.execute(
+                "INSERT OR IGNORE INTO pending_vector_deletions(repository_id,file_path) VALUES(?,?)",
+                (repository_id, path),
+            )
+            self._connection.execute(
                 "DELETE FROM chunks WHERE repository_id=? AND file_path=?", (repository_id, path)
             )
             self._connection.execute(
                 "DELETE FROM files WHERE repository_id=? AND path=?", (repository_id, path)
             )
+
+    def mark_vector_dirty(self, repository_id: str, path: str) -> None:
+        self.execute(
+            "UPDATE files SET vector_synced=0 WHERE repository_id=? AND path=?",
+            (repository_id, path),
+        )
+
+    def pending_deletions(self, repository_id: str) -> set[str]:
+        return {
+            row["file_path"]
+            for row in self.fetchall(
+                "SELECT file_path FROM pending_vector_deletions WHERE repository_id=?",
+                (repository_id,),
+            )
+        }
+
+    def finish_vector_deletion(self, repository_id: str, path: str) -> None:
+        self.execute(
+            "DELETE FROM pending_vector_deletions WHERE repository_id=? AND file_path=?",
+            (repository_id, path),
+        )
 
     def update_file_commit(self, repository_id: str, path: str, commit_sha: str) -> None:
         """Advance unchanged file/chunk provenance without re-embedding content."""
@@ -272,41 +302,6 @@ class Database:
             )
         except sqlite3.OperationalError:
             return []
-
-    def add_job(self, job: Job) -> None:
-        values = job.model_dump()
-        values["cancel_requested"] = int(job.cancel_requested)
-        columns = ",".join(values)
-        placeholders = ",".join("?" for _key in values)
-        self.execute(f"INSERT INTO jobs({columns}) VALUES({placeholders})", values.values())  # noqa: S608
-
-    def job(self, job_id: str) -> Job | None:
-        row = self.fetchone("SELECT * FROM jobs WHERE id=?", (job_id,))
-        return Job.model_validate(row) if row else None
-
-    def job_by_key(self, key: str) -> Job | None:
-        row = self.fetchone("SELECT * FROM jobs WHERE idempotency_key=?", (key,))
-        return Job.model_validate(row) if row else None
-
-    def update_job(self, job_id: str, **fields: Any) -> None:
-        allowed = set(Job.model_fields) - {"id", "repository_id", "kind", "mode", "created_at"}
-        values = {
-            key: int(value) if key == "cancel_requested" else value
-            for key, value in fields.items()
-            if key in allowed
-        }
-        values.setdefault("updated_at", utc_now())
-        assignments = ",".join(f"{key}=?" for key in values)
-        self.execute(f"UPDATE jobs SET {assignments} WHERE id=?", (*values.values(), job_id))  # noqa: S608
-
-    def recoverable_jobs(self) -> list[Job]:
-        rows = self.fetchall("SELECT * FROM jobs WHERE status IN ('queued','running','retrying')")
-        return [Job.model_validate(row) for row in rows]
-
-    def job_counts(self) -> tuple[int, int]:
-        rows = self.fetchall("SELECT status,COUNT(*) count FROM jobs GROUP BY status")
-        counts = {row["status"]: row["count"] for row in rows}
-        return counts.get("running", 0), counts.get("queued", 0) + counts.get("retrying", 0)
 
     def log_query(
         self,
