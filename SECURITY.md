@@ -6,7 +6,7 @@ Security fixes are applied to the latest v1.x release on `main`.
 
 ## Reporting a vulnerability
 
-Use [GitHub private vulnerability reporting](https://github.com/primjim1234/repomesh/security/advisories/new). Do not open a public issue containing credentials, private repository content, network addresses, or exploit details. Include the affected version, impact, reproduction steps, and any proposed mitigation without attaching real secrets.
+Use [GitHub private vulnerability reporting](https://github.com/yangchen1234/repomesh/security/advisories/new). Do not open a public issue containing credentials, private repository content, network addresses, or exploit details. Include the affected version, impact, reproduction steps, and any proposed mitigation without attaching real secrets.
 
 ## Deployment boundary
 

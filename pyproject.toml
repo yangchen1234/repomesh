@@ -26,10 +26,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/primjim1234/repomesh"
-Repository = "https://github.com/primjim1234/repomesh"
-Documentation = "https://github.com/primjim1234/repomesh#readme"
-Issues = "https://github.com/primjim1234/repomesh/issues"
+Homepage = "https://github.com/yangchen1234/repomesh"
+Repository = "https://github.com/yangchen1234/repomesh"
+Documentation = "https://github.com/yangchen1234/repomesh#readme"
+Issues = "https://github.com/yangchen1234/repomesh/issues"
 
 [project.optional-dependencies]
 dev = [
